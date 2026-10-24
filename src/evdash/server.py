@@ -21,7 +21,7 @@ log = logging.getLogger("evdash.server")
 _QUERY = re.compile(r"\?[^\s'\"]*")
 
 _PAGES = {
-    "/auth/done": ("Signed in", "Sign-in complete. You can close this tab."),
+    "/auth/done": ("Sign-in done", "Sign-in complete. You can close this tab."),
     "/auth/failed": ("Sign-in failed", "Sign-in did not complete. Start again from the login link."),
 }
 
@@ -68,7 +68,7 @@ class _Handler(BaseHTTPRequestHandler):
             title, text = _PAGES[parts.path]
             self._text(200, text, title=title)
         else:
-            self._text(404, "Not found")
+            self._text(404, "Page not found")
 
     do_HEAD = do_GET
 
@@ -76,7 +76,7 @@ class _Handler(BaseHTTPRequestHandler):
         # Starting a sign-in is a POST so that a link or an embedded image cannot trigger it
         # (each start uses up one of a few pending slots).
         if urllib.parse.urlsplit(self.path).path != "/auth/login":
-            return self._text(404, "Not found")
+            return self._text(404, "Page not found")
         state, challenge = self.app.pending.begin()
         self._redirect(303, auth.build_authorize_url(self.app.cfg, state, challenge))
 
