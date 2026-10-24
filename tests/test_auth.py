@@ -106,6 +106,15 @@ class TokenExchange(unittest.TestCase):
         self.assertEqual(saved["refresh_token"], "test-data-r1")
         self.assertEqual(saved["expires_at"], 5120.0)
 
+    def test_basic_header_urlencodes_credentials(self):
+        cfg = auth.OAuthConfig("id:1", "se:cr+et%", REDIRECT, "https://a.example.test/a",
+                               "https://a.example.test/t", ("s",))
+        idp = FakeIdP([(200, {"access_token": "test-data-a1", "refresh_token": "test-data-r1"})])
+        auth.TokenManager(cfg, self.store, post=idp,
+                          clock=lambda: 1.0).complete_sign_in("c", "v")
+        sent = base64.b64decode(idp.calls[0][2]["Authorization"][6:]).decode()
+        self.assertEqual(sent, "id%3A1:se%3Acr%2Bet%25")
+
     def test_exchange_without_refresh_token_is_an_error(self):
         idp = FakeIdP([(200, {"access_token": "test-data-a1", "expires_in": 120})])
         with self.assertRaises(auth.AuthError):
@@ -181,13 +190,20 @@ class TokenFile(unittest.TestCase):
         self.assertEqual(self.path.stat().st_mode & 0o777, 0o600)
 
     def test_crash_during_replace_keeps_old_file_and_leaves_no_temp(self):
-        self.store.save({"access_token": "test-data-old"})
+        self.store.save({"access_token": "test-data-old", "expires_at": 1.0})
         with mock.patch("evdash.auth.os.replace", side_effect=OSError("simulated crash")):
             with self.assertRaises(OSError):
-                self.store.save({"access_token": "test-data-new"})
+                self.store.save({"access_token": "test-data-new", "expires_at": 2.0})
         self.assertEqual(self.store.load()["access_token"], "test-data-old")
         self.assertEqual([p.name for p in Path(self.dir.name).iterdir()
                           if p.name.endswith(".tmp")], [])
+
+    def test_wrong_shape_is_an_auth_error(self):
+        for text in ('{}', '[]', '{"access_token": 1, "expires_at": 1}',
+                     '{"access_token": "x", "expires_at": "soon"}'):
+            self.path.write_text(text)
+            with self.assertRaises(auth.AuthError, msg=text):
+                self.store.load()
 
     def test_corrupt_file_is_an_auth_error_not_a_crash(self):
         self.path.write_text("{not json")

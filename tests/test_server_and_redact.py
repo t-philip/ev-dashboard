@@ -85,6 +85,11 @@ class Config(unittest.TestCase):
             with self.assertRaises(config.ConfigError):
                 config.load(env)
 
+    def test_plain_http_token_url_rejected(self):
+        with tempfile.TemporaryDirectory() as d:
+            with self.assertRaises(config.ConfigError):
+                config.load(self.env(d, EVDASH_TOKEN_URL="http://idp.example.test/token"))
+
     def test_http_redirect_rejected(self):
         with tempfile.TemporaryDirectory() as d:
             with self.assertRaises(config.ConfigError):
@@ -131,8 +136,12 @@ class Live(unittest.TestCase):
         return resp
 
     def login(self):
-        resp = self.get("/auth/login")
-        self.assertEqual(resp.status, 302)
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("POST", "/auth/login")
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        self.assertEqual(resp.status, 303)
         q = urllib.parse.parse_qs(urllib.parse.urlsplit(resp.getheader("Location")).query)
         return q["state"][0]
 
@@ -202,7 +211,15 @@ class Live(unittest.TestCase):
         resp = self.get("/auth/done")
         self.assertEqual(resp.getheader("Referrer-Policy"), "no-referrer")
         self.assertEqual(resp.getheader("Cache-Control"), "no-store")
-        self.assertEqual(resp.getheader("Content-Security-Policy"), "default-src 'none'")
+        self.assertEqual(resp.getheader("Content-Security-Policy"),
+                         "default-src 'none'; form-action 'self'")
+
+    def test_get_login_page_does_not_start_a_sign_in(self):
+        self.start([])
+        for _ in range(40):
+            self.assertEqual(self.get("/auth/login").status, 200)
+        state = self.login()  # still works: the GETs used up no slots
+        self.assertIsNotNone(self.pending.take(state))
 
     def test_unknown_path_404(self):
         self.start([])

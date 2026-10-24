@@ -55,6 +55,11 @@ def load(env: Mapping[str, str] = os.environ) -> Settings:
     scopes = tuple(env.get("EVDASH_SCOPES", "").split())
     if not scopes:
         raise ConfigError("EVDASH_SCOPES must list the read scopes to request")
+    authorize = env.get("EVDASH_AUTHORIZE_URL", DEFAULT_AUTHORIZE_URL)
+    token = env.get("EVDASH_TOKEN_URL", DEFAULT_TOKEN_URL)
+    for name, url in (("EVDASH_AUTHORIZE_URL", authorize), ("EVDASH_TOKEN_URL", token)):
+        if not url.startswith("https://"):
+            raise ConfigError(f"{name} must be an https:// address")
     host, _, port = env.get("EVDASH_LISTEN", "127.0.0.1:8100").rpartition(":")
     try:
         port_number = int(port)
@@ -64,8 +69,8 @@ def load(env: Mapping[str, str] = os.environ) -> Settings:
         client_id=read_credential("client_id", env),
         client_secret=read_credential("client_secret", env),
         redirect_uri=redirect,
-        authorize_url=env.get("EVDASH_AUTHORIZE_URL", DEFAULT_AUTHORIZE_URL),
-        token_url=env.get("EVDASH_TOKEN_URL", DEFAULT_TOKEN_URL),
+        authorize_url=authorize,
+        token_url=token,
         scopes=scopes,
     )
     return Settings(oauth, host or "127.0.0.1", port_number,

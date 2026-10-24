@@ -61,8 +61,7 @@ class _Handler(BaseHTTPRequestHandler):
         if parts.path == "/healthz":
             self._text(200, "ok")
         elif parts.path == "/auth/login":
-            state, challenge = self.app.pending.begin()
-            self._redirect(302, auth.build_authorize_url(self.app.cfg, state, challenge))
+            self._login_page()
         elif parts.path == "/auth/callback":
             self._callback(urllib.parse.parse_qs(parts.query))
         elif parts.path in _PAGES:
@@ -72,6 +71,26 @@ class _Handler(BaseHTTPRequestHandler):
             self._text(404, "Not found")
 
     do_HEAD = do_GET
+
+    def do_POST(self):
+        # Starting a sign-in is a POST so that a link or an embedded image cannot trigger it
+        # (each start uses up one of a few pending slots).
+        if urllib.parse.urlsplit(self.path).path != "/auth/login":
+            return self._text(404, "Not found")
+        state, challenge = self.app.pending.begin()
+        self._redirect(303, auth.build_authorize_url(self.app.cfg, state, challenge))
+
+    def _login_page(self):
+        body = ('<!doctype html><meta charset=utf-8><title>Sign in</title>'
+                '<form method=post action=/auth/login><button>Sign in</button></form>'
+                ).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._headers()
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def _callback(self, query):
         def one(name):
@@ -97,7 +116,8 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Content-Security-Policy", "default-src 'none'")
+        self.send_header("Content-Security-Policy",
+                         "default-src 'none'; form-action 'self'")
 
     def _redirect(self, status, location):
         self.send_response(status)

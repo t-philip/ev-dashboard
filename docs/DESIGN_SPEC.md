@@ -95,17 +95,18 @@ manufacturer APIs  <-HTTPS-  collector  ->  SQLite  <-  web UI (read-only views)
   and are written atomically so a crash cannot lose the rotated refresh token.
 - **Callback handling:** the authorisation code is in the callback URL, so the callback never
   renders a page. It exchanges the code and answers with a redirect to a result page that has no
-  query string. No access-log line, error line or exception text includes a query string, and a
-  redacting log formatter scrubs token-shaped text as a second layer. Result pages carry no
+  query string. The server's own access-log and error lines never include a query string, and a
+  redacting log formatter scrubs credential-shaped text as a best-effort second layer (it cannot
+  catch every possible token format). Result pages carry no
   scripts and send `Referrer-Policy: no-referrer`.
 - **State and PKCE:** each sign-in link carries a random single-use `state` that expires after ten
   minutes; a replayed, forged or stale callback is refused before any code is exchanged.
 - **Client credentials** go to the token endpoint in an HTTP Basic header, never in a URL, and are
   read from files (systemd credentials or an explicit file path), never from environment values.
-- **Who can start a sign-in:** `/auth/login` is not itself authenticated. The web UI is meant for
-  a private network (section 7), and a sign-in only completes with the owner's own account at the
-  manufacturer, but anyone who can reach the page can replace the stored tokens by completing a
-  sign-in of their own. Do not expose it beyond a network you trust.
+- **Who can start a sign-in:** `/auth/login` is not itself authenticated; starting one needs a
+  POST, so a link or embedded image cannot trigger it, but any client that can reach the page can
+  use up the few pending slots or complete a sign-in of its own. The web UI is meant for
+  a private network (section 7). Do not expose it beyond a network you trust.
 
 ## 6. Polling and the request budget
 
@@ -145,7 +146,7 @@ single-owner project.
 | Daily request budget is enforced in code | Not built, not verified |
 | OAuth sign-in with PKCE completes and tokens refresh unattended | Built; verified by automated tests against a fake identity provider only. Not yet verified against the real provider |
 | Refresh tokens are never logged or printed | Built; covered by automated tests (access log, error lines, tracebacks, status output). Not yet verified in a live deployment |
-| Rotated refresh token survives a crash during save | Built; covered by an automated test of the save path. The file-permission check runs only on POSIX systems |
+| Rotated refresh token survives a crash during save | Built; covered by an automated test of the save path. Owner-only file permissions and the cross-process write lock are POSIX features: on Windows only an in-process lock applies and the permission test is skipped |
 | Charging sessions detected correctly | Not built, not verified |
 | Trips and efficiency detected correctly | Not built, not verified |
 | Location is off unless enabled | Not built, not verified |

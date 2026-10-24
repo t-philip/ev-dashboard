@@ -157,7 +157,10 @@ def _error_code(payload: dict) -> str:
 def _token_request(cfg: OAuthConfig, form: Dict[str, str], post: PostFn,
                    clock: Callable[[], float]) -> dict:
     """POST to the token endpoint with the client credentials in an HTTP Basic header."""
-    basic = base64.b64encode(f"{cfg.client_id}:{cfg.client_secret}".encode("utf-8"))
+    # RFC 6749 section 2.3.1: form-urlencode both parts before joining them.
+    userpass = (urllib.parse.quote_plus(cfg.client_id) + ":"
+                + urllib.parse.quote_plus(cfg.client_secret))
+    basic = base64.b64encode(userpass.encode("utf-8"))
     status, payload = post(cfg.token_url, form,
                            {"Authorization": "Basic " + basic.decode("ascii")})
     if status != 200:
@@ -198,7 +201,12 @@ class TokenStore:
             data = json.loads(raw)
         except ValueError:
             raise AuthError("token file is not valid JSON") from None
-        if not isinstance(data, dict):
+        refresh = data.get("refresh_token") if isinstance(data, dict) else None
+        if (not isinstance(data, dict)
+                or not isinstance(data.get("access_token"), str)
+                or not (refresh is None or isinstance(refresh, str))
+                or isinstance(data.get("expires_at"), bool)
+                or not isinstance(data.get("expires_at"), (int, float))):
             raise AuthError("token file has an unexpected shape")
         return data
 
@@ -210,14 +218,14 @@ class TokenStore:
         old one is already dead once the server has replied.
         """
         directory = self.path.parent
-        directory.mkdir(parents=True, exist_ok=True)
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd, tmp = tempfile.mkstemp(dir=directory, prefix=".tokens-", suffix=".tmp")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as handle:  # mkstemp makes it mode 600
                 json.dump(tokens, handle)
                 handle.flush()
                 os.fsync(handle.fileno())
-            os.replace(tmp, self.path)
+            self._replace(tmp)
         except BaseException:
             with contextlib.suppress(OSError):
                 os.unlink(tmp)
@@ -228,6 +236,17 @@ class TokenStore:
                 os.fsync(dir_fd)
             finally:
                 os.close(dir_fd)
+
+    def _replace(self, tmp: str) -> None:
+        # On Windows the rename fails while another reader holds the file open: retry briefly.
+        for attempt in range(6):
+            try:
+                os.replace(tmp, self.path)
+                return
+            except PermissionError:
+                if attempt == 5:
+                    raise
+                time.sleep(0.05)
 
     @contextlib.contextmanager
     def exclusive(self):
