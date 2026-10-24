@@ -121,13 +121,18 @@ class TokenExchange(unittest.TestCase):
                    "expires_in": 120, "scope": "openid scope:one"}),
             (200, {"access_token": "test-data-a2", "refresh_token": "test-data-r2",
                    "expires_in": 120}),  # a refresh reply that omits scope
+            (200, {"access_token": "test-data-a3", "refresh_token": "test-data-r3",
+                   "expires_in": 120, "scope": "openid scope:other"}),  # one that changes it
         ])
         mgr = self.manager(idp)
         mgr.complete_sign_in("c", "v")
         self.assertEqual(mgr.status()["granted_scopes"], ["openid", "scope:one"])
         self.now[0] += 1000
         mgr.access_token()
-        self.assertEqual(self.store.load()["scope"], "openid scope:one")
+        self.assertEqual(self.store.load()["scope"], "openid scope:one")  # kept
+        self.now[0] += 1000
+        mgr.access_token()
+        self.assertEqual(self.store.load()["scope"], "openid scope:other")  # replaced
 
     def test_odd_scope_value_is_ignored(self):
         idp = FakeIdP([(200, {"access_token": "test-data-a1", "refresh_token": "test-data-r1",

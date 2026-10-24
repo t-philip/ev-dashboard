@@ -144,7 +144,7 @@ def post_form(url: str, data: Dict[str, str], headers: Dict[str, str],
     return status, payload if isinstance(payload, dict) else {}
 
 
-_SAFE_SCOPE = re.compile(r"[A-Za-z0-9_.:\- ]{1,1024}")
+_SAFE_SCOPE = re.compile(r"[A-Za-z0-9_.:/@+%=\- ]{1,1024}")  # no control characters
 _SAFE_ERROR = re.compile(r"[A-Za-z0-9_.\- ]{1,64}")
 
 
