@@ -232,6 +232,46 @@ class Live(unittest.TestCase):
         state = self.login()  # still works: the GETs used up no slots
         self.assertIsNotNone(self.pending.take(state))
 
+    def test_home_page_when_not_signed_in(self):
+        self.start([])
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/")
+        resp = conn.getresponse()
+        text = resp.read().decode()
+        conn.close()
+        self.assertEqual(resp.status, 200)
+        self.assertIn("Not signed in", text)
+        self.assertIn('href=/auth/login', text)
+        self.assertEqual(resp.getheader("Content-Security-Policy"),
+                         "default-src 'none'; style-src 'unsafe-inline'")
+        self.assertNotIn("<script", text.lower())
+
+    def test_home_page_shows_scopes_but_never_a_token(self):
+        self.start([])
+        self.store.save({"access_token": ACCESS, "refresh_token": REFRESH,
+                         "expires_at": 9e12, "scope": "openid scope:one <b>x</b>"})
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/")
+        text = conn.getresponse().read().decode()
+        conn.close()
+        self.assertIn("signed in.", text.lower())
+        self.assertIn("scope:one", text)
+        self.assertIn("&lt;b&gt;", text)          # stored text is escaped, never rendered
+        self.assertNotIn("<b>x", text)
+        for secret in (ACCESS, REFRESH):
+            self.assertNotIn(secret, text)
+
+    def test_home_page_survives_a_corrupt_token_file(self):
+        self.start([])
+        self.store.path.write_text("{not json")
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/")
+        resp = conn.getresponse()
+        text = resp.read().decode()
+        conn.close()
+        self.assertEqual(resp.status, 200)
+        self.assertIn("could not be read", text)
+
     def test_unknown_path_404(self):
         self.start([])
         self.assertEqual(self.get("/nope").status, 404)

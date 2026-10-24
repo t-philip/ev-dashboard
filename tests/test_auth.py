@@ -134,6 +134,24 @@ class TokenExchange(unittest.TestCase):
         mgr.access_token()
         self.assertEqual(self.store.load()["scope"], "openid scope:other")  # replaced
 
+    def test_scope_is_read_from_the_token_when_the_reply_has_none(self):
+        claims = base64.urlsafe_b64encode(json.dumps(
+            {"scope": "openid scope:one scope:two", "sub": "test-data"}).encode()).rstrip(b"=")
+        jwt = "e30." + claims.decode() + ".test-data-signature"
+        idp = FakeIdP([(200, {"access_token": jwt, "refresh_token": "test-data-r1",
+                              "expires_in": 120})])
+        mgr = self.manager(idp)
+        mgr.complete_sign_in("c", "v")
+        self.assertEqual(mgr.status()["granted_scopes"], ["openid", "scope:one", "scope:two"])
+
+    def test_opaque_or_malformed_tokens_give_no_scopes(self):
+        for token in ("test-data-opaque", "a.b.c", "e30.!!!.x", "e30." + base64.urlsafe_b64encode(
+                b'["not", "a", "dict"]').decode().rstrip("=") + ".x"):
+            idp = FakeIdP([(200, {"access_token": token, "refresh_token": "test-data-r1"})])
+            mgr = self.manager(idp)
+            mgr.complete_sign_in("c", "v")
+            self.assertIsNone(mgr.status()["granted_scopes"], token)
+
     def test_odd_scope_value_is_ignored(self):
         idp = FakeIdP([(200, {"access_token": "test-data-a1", "refresh_token": "test-data-r1",
                               "scope": "x\ninjected"})])

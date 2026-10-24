@@ -183,9 +183,29 @@ def _token_request(cfg: OAuthConfig, form: Dict[str, str], post: PostFn,
         "expires_at": clock() + float(expires_in),
     }
     scope = payload.get("scope")
+    if not isinstance(scope, str):
+        scope = _scope_claim(access)  # some servers only put it inside the token
     if isinstance(scope, str) and _SAFE_SCOPE.fullmatch(scope):
         tokens["scope"] = scope  # the scopes the server actually granted; not a secret
     return tokens
+
+
+def _scope_claim(token: str) -> Optional[str]:
+    """The ``scope`` claim of a JWT access token, read without verifying it.
+
+    Informational only (what to show the owner); nothing is trusted or decided from it.
+    Returns None for an opaque token or anything unexpected.
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+        claims = json.loads(base64.urlsafe_b64decode(padded))
+    except (ValueError, TypeError):
+        return None
+    scope = claims.get("scope") if isinstance(claims, dict) else None
+    return scope if isinstance(scope, str) else None
 
 
 # --- token cache ------------------------------------------------------------
