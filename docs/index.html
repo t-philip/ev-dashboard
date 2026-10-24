@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EV Dashboard</title>
+<meta name="description" content="A personal, self-hosted, read-only dashboard for your own electric vehicle's data. In development.">
+<style>
+  :root { --bg:#ffffff; --fg:#1d2330; --muted:#5a6475; --rule:#d9dee7; --link:#0b57d0; --note-bg:#f3f6fb; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg:#12161d; --fg:#e6e9ef; --muted:#9aa4b5; --rule:#2b3340; --link:#8ab4f8; --note-bg:#1a212c; }
+  }
+  :root[data-theme="dark"] { --bg:#12161d; --fg:#e6e9ef; --muted:#9aa4b5; --rule:#2b3340; --link:#8ab4f8; --note-bg:#1a212c; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  main { max-width:42rem; margin:0 auto; padding:2rem 16px 4rem; }
+  h1 { font-size:1.8rem; line-height:1.2; margin:0 0 .25rem; }
+  h2 { font-size:1.15rem; margin:2rem 0 .5rem; }
+  p, li { margin:.5rem 0; }
+  ul { padding-left:1.2rem; }
+  a { color:var(--link); }
+  .lede { color:var(--muted); margin:0 0 1.5rem; }
+  .note { background:var(--note-bg); border:1px solid var(--rule); border-radius:8px; padding:.75rem 1rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>EV Dashboard</h1>
+  <p class="lede">A personal, self-hosted, read-only dashboard for your own electric vehicle's data.</p>
+
+  <p class="note"><strong>Status:</strong> in development. There is no release yet.</p>
+
+  <h2>What it will show</h2>
+  <ul>
+    <li>Battery level and range over time</li>
+    <li>Charging sessions</li>
+    <li>Trips and efficiency</li>
+    <li>Current status: locks, doors, windows, tyres, service</li>
+    <li>Location, only if you turn it on</li>
+  </ul>
+
+  <h2>Principles</h2>
+  <ul>
+    <li>You run it yourself, and your data is designed to stay on your own machine.</li>
+    <li>Designed to be read-only: it does not control the vehicle.</li>
+    <li>Every user registers their own developer application with the manufacturer.</li>
+  </ul>
+
+  <h2>Links</h2>
+  <ul>
+    <li><a href="terms.html">Terms and Conditions</a></li>
+    <li><a href="https://github.com/t-philip/ev-dashboard">Source code on GitHub</a></li>
+  </ul>
+
+  <p class="lede">Independent hobby project. Not affiliated with, endorsed by, or sponsored by Volvo Cars or any other vehicle manufacturer.</p>
+</main>
+</body>
+</html>

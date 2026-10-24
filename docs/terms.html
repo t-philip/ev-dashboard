@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terms and Conditions - EV Dashboard</title>
+<meta name="description" content="Terms and conditions for EV Dashboard, a personal, self-hosted, read-only dashboard for your own electric vehicle's data.">
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1d2330; --muted: #5a6475; --rule: #d9dee7; --link: #0b57d0; --note-bg: #f3f6fb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #12161d; --fg: #e6e9ef; --muted: #9aa4b5; --rule: #2b3340; --link: #8ab4f8; --note-bg: #1a212c;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #12161d; --fg: #e6e9ef; --muted: #9aa4b5; --rule: #2b3340; --link: #8ab4f8; --note-bg: #1a212c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 42rem; margin: 0 auto; padding: 2rem 16px 4rem; }
+  h1 { font-size: 1.6rem; line-height: 1.25; margin: 0 0 .25rem; }
+  h2 { font-size: 1.15rem; margin: 2rem 0 .5rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+  p, li { margin: .5rem 0; }
+  ul { padding-left: 1.2rem; }
+  a { color: var(--link); }
+  .meta { color: var(--muted); font-size: .9rem; margin: 0 0 1.5rem; }
+  .note { background: var(--note-bg); border: 1px solid var(--rule); border-radius: 8px; padding: .75rem 1rem; }
+  nav { margin-bottom: 1.5rem; font-size: .9rem; }
+</style>
+</head>
+<body>
+<main>
+  <nav><a href="index.html">&larr; EV Dashboard</a></nav>
+
+  <h1>Terms and Conditions</h1>
+  <p class="meta">EV Dashboard &middot; Revision 1 (pre-release)</p>
+
+  <p class="note"><strong>Status:</strong> EV Dashboard is under development and has no release yet. This page describes how the application is designed to behave. It will be updated when the first release is published.</p>
+
+  <h2>1. What this is</h2>
+  <p>EV Dashboard is a planned self-hosted web application, with its source code published on GitHub, that you run yourself on your own computer or server. No licence has been chosen yet; one will be added with the first release. It is designed to show data about your own electric vehicle, such as battery level and range, charging sessions, trips, and current status (locks, doors, service). It is designed to get that data from the vehicle manufacturer's official developer APIs, only after you have given your consent through your own account with the manufacturer.</p>
+  <p>These terms describe the software. The author provides no service and there is no account with the author. Requests to the manufacturer's APIs are made from your own machine directly to the manufacturer, and the manufacturer's own privacy terms apply to that traffic.</p>
+  <p>EV Dashboard is an independent hobby project. It is not affiliated with, endorsed by, or sponsored by Volvo Cars or any other vehicle manufacturer. Product and company names are trademarks of their respective owners and are used only to describe what the software works with.</p>
+
+  <h2>2. How it works</h2>
+  <ul>
+    <li><strong>You run your own copy.</strong> There is no shared or hosted service. The project's author does not operate a server that receives your data.</li>
+    <li><strong>You use your own credentials.</strong> You register your own developer application with the manufacturer and sign in with your own account. Credentials of the project are never shared or distributed.</li>
+    <li><strong>Read-only.</strong> The application is designed to ask only for read access, so that it cannot lock or unlock the vehicle, start or stop it, control charging, or send any other command.</li>
+    <li><strong>Limited polling.</strong> The application is designed to stay within the daily request limits the manufacturer sets.</li>
+  </ul>
+
+  <h2>3. Your data</h2>
+  <ul>
+    <li>Data read from your vehicle is designed to be stored only in a database on the machine where you run the application.</li>
+    <li>The application is designed not to send your data, or analytics about your use, to the project's author or to any third party.</li>
+    <li>Location data is sensitive. If the application offers it, it is switched off unless you turn it on.</li>
+    <li>You can stop the application from accessing your data at any time by deleting its stored credentials and its database, and by withdrawing your authorisation with the manufacturer. Deleting the database deletes the history the application has collected.</li>
+  </ul>
+
+  <h2>4. Your responsibilities</h2>
+  <ul>
+    <li>You must follow the manufacturer's developer portal terms and API agreement, including its rate limits, when you register and use your own developer application.</li>
+    <li>You are responsible for keeping your credentials and your server secure, and for any other people who use your copy.</li>
+    <li>Use the application only for your own vehicle, or a vehicle whose owner has agreed to it.</li>
+  </ul>
+
+  <h2>5. No warranty</h2>
+  <p>The software and any information it shows are provided &ldquo;as is&rdquo;, without warranty of any kind. Vehicle data may be delayed, incomplete, or unavailable, and the manufacturer may change or withdraw its APIs at any time without notice. Do not rely on the application for safety-critical or time-critical decisions. To the extent permitted by law, the author is not liable for any loss or damage arising from the use of the software.</p>
+
+  <h2>6. Contact and changes</h2>
+  <p>The project is maintained by T. Philip (<a href="https://github.com/t-philip">github.com/t-philip</a>). For questions, use the issue tracker of the project's repository: <a href="https://github.com/t-philip/ev-dashboard">github.com/t-philip/ev-dashboard</a>.</p>
+  <p>These terms may be updated from time to time. The revision number at the top changes whenever they do, and the full history is in the project's repository.</p>
+</main>
+</body>
+</html>

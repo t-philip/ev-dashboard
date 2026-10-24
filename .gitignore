@@ -1,0 +1,21 @@
+# Private vocabulary for scripts/check_privacy.sh (see docs/PRIVACY.md) - never tracked
+/.privacy-denylist.private
+
+# Secrets and local state - never tracked
+.env
+*.env
+*.db
+*.sqlite
+*.sqlite3
+*-token*.txt
+api-key*.txt
+credentials/
+raw/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
