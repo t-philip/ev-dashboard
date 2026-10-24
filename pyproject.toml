@@ -1,0 +1,13 @@
+[project]
+name = "evdash"
+version = "0.0.0"
+description = "A personal, self-hosted, read-only dashboard for your own vehicle's data (in development)."
+requires-python = ">=3.9"
+dependencies = []
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]

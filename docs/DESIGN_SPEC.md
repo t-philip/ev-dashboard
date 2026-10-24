@@ -1,8 +1,9 @@
 # EV Dashboard - Design Specification
 
-**Status: DRAFT (pre-implementation).** Nothing described below is built yet. This document records
+**Status: DRAFT (early implementation).** Only the sign-in module is built (section 5); the
+collector, storage and web views described below are not. Section 10 gives the status per item. This document records
 the design decisions and the constraints behind them. Section 10 states which acceptance criteria
-are verified (none yet). It will be reconciled against the as-built code before the first release.
+are verified; none is verified against a live deployment yet. It will be reconciled against the as-built code before the first release.
 
 ## 1. Purpose and scope
 
@@ -92,8 +93,19 @@ manufacturer APIs  <-HTTPS-  collector  ->  SQLite  <-  web UI (read-only views)
   for 7 days, and the grant ends after 6 months, when the owner must sign in again. Tokens are
   stored in a file outside the web root with owner-only permissions, are never logged or printed,
   and are written atomically so a crash cannot lose the rotated refresh token.
-- **Callback page:** minimal, with no third-party scripts, because the authorisation code is in
-  the URL.
+- **Callback handling:** the authorisation code is in the callback URL, so the callback never
+  renders a page. It exchanges the code and answers with a redirect to a result page that has no
+  query string. No access-log line, error line or exception text includes a query string, and a
+  redacting log formatter scrubs token-shaped text as a second layer. Result pages carry no
+  scripts and send `Referrer-Policy: no-referrer`.
+- **State and PKCE:** each sign-in link carries a random single-use `state` that expires after ten
+  minutes; a replayed, forged or stale callback is refused before any code is exchanged.
+- **Client credentials** go to the token endpoint in an HTTP Basic header, never in a URL, and are
+  read from files (systemd credentials or an explicit file path), never from environment values.
+- **Who can start a sign-in:** `/auth/login` is not itself authenticated. The web UI is meant for
+  a private network (section 7), and a sign-in only completes with the owner's own account at the
+  manufacturer, but anyone who can reach the page can replace the stored tokens by completing a
+  sign-in of their own. Do not expose it beyond a network you trust.
 
 ## 6. Polling and the request budget
 
@@ -131,8 +143,9 @@ single-owner project.
 |---|---|
 | Collector stores every reading with its timestamp | Not built, not verified |
 | Daily request budget is enforced in code | Not built, not verified |
-| OAuth sign-in with PKCE completes and tokens refresh unattended | Not built, not verified |
-| Refresh tokens are never logged or printed | Not built, not verified |
+| OAuth sign-in with PKCE completes and tokens refresh unattended | Built; verified by automated tests against a fake identity provider only. Not yet verified against the real provider |
+| Refresh tokens are never logged or printed | Built; covered by automated tests (access log, error lines, tracebacks, status output). Not yet verified in a live deployment |
+| Rotated refresh token survives a crash during save | Built; covered by an automated test of the save path. The file-permission check runs only on POSIX systems |
 | Charging sessions detected correctly | Not built, not verified |
 | Trips and efficiency detected correctly | Not built, not verified |
 | Location is off unless enabled | Not built, not verified |
