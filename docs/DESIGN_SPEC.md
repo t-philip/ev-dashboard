@@ -99,6 +99,10 @@ manufacturer APIs  <-HTTPS-  collector  ->  SQLite  <-  web UI (read-only views)
   redacting log formatter scrubs credential-shaped text as a best-effort second layer (it cannot
   catch every possible token format). Result pages carry no
   scripts and send `Referrer-Policy: no-referrer`.
+- **Granted scopes:** the scopes the server reports in its token reply are kept in the token file
+  (they are not secret) and shown by the `status` command, so what was actually granted is
+  visible rather than assumed. The scopes requested are set by configuration and can be fewer
+  than the application is registered for.
 - **State and PKCE:** each sign-in link carries a random single-use `state` that expires after ten
   minutes; a replayed, forged or stale callback is refused before any code is exchanged.
 - **Client credentials** go to the token endpoint in an HTTP Basic header, never in a URL, and are

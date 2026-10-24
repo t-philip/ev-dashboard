@@ -115,6 +115,27 @@ class TokenExchange(unittest.TestCase):
         sent = base64.b64decode(idp.calls[0][2]["Authorization"][6:]).decode()
         self.assertEqual(sent, "id%3A1:se%3Acr%2Bet%25")
 
+    def test_granted_scopes_are_stored_and_survive_a_refresh(self):
+        idp = FakeIdP([
+            (200, {"access_token": "test-data-a1", "refresh_token": "test-data-r1",
+                   "expires_in": 120, "scope": "openid scope:one"}),
+            (200, {"access_token": "test-data-a2", "refresh_token": "test-data-r2",
+                   "expires_in": 120}),  # a refresh reply that omits scope
+        ])
+        mgr = self.manager(idp)
+        mgr.complete_sign_in("c", "v")
+        self.assertEqual(mgr.status()["granted_scopes"], ["openid", "scope:one"])
+        self.now[0] += 1000
+        mgr.access_token()
+        self.assertEqual(self.store.load()["scope"], "openid scope:one")
+
+    def test_odd_scope_value_is_ignored(self):
+        idp = FakeIdP([(200, {"access_token": "test-data-a1", "refresh_token": "test-data-r1",
+                              "scope": "x\ninjected"})])
+        mgr = self.manager(idp)
+        mgr.complete_sign_in("c", "v")
+        self.assertIsNone(mgr.status()["granted_scopes"])
+
     def test_exchange_without_refresh_token_is_an_error(self):
         idp = FakeIdP([(200, {"access_token": "test-data-a1", "expires_in": 120})])
         with self.assertRaises(auth.AuthError):

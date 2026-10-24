@@ -144,6 +144,7 @@ def post_form(url: str, data: Dict[str, str], headers: Dict[str, str],
     return status, payload if isinstance(payload, dict) else {}
 
 
+_SAFE_SCOPE = re.compile(r"[A-Za-z0-9_.:\- ]{1,1024}")
 _SAFE_ERROR = re.compile(r"[A-Za-z0-9_.\- ]{1,64}")
 
 
@@ -176,11 +177,15 @@ def _token_request(cfg: OAuthConfig, form: Dict[str, str], post: PostFn,
     expires_in = payload.get("expires_in")
     if not isinstance(expires_in, (int, float)) or expires_in <= 0:
         expires_in = 300
-    return {
+    tokens = {
         "access_token": access,
         "refresh_token": refresh if isinstance(refresh, str) and refresh else None,
         "expires_at": clock() + float(expires_in),
     }
+    scope = payload.get("scope")
+    if isinstance(scope, str) and _SAFE_SCOPE.fullmatch(scope):
+        tokens["scope"] = scope  # the scopes the server actually granted; not a secret
+    return tokens
 
 
 # --- token cache ------------------------------------------------------------
@@ -302,6 +307,8 @@ class TokenManager:
             new = _token_request(self._cfg, form, self._post, self._clock)
             if not new["refresh_token"]:
                 new["refresh_token"] = refresh  # server did not rotate: keep the one we have
+            if "scope" not in new and isinstance(tokens.get("scope"), str):
+                new["scope"] = tokens["scope"]
             self._store.save(new)
             return new["access_token"]
 
@@ -310,5 +317,7 @@ class TokenManager:
         tokens = self._store.load()
         if tokens is None:
             return {"signed_in": False}
-        return {"signed_in": True,
+        scope = tokens.get("scope")
+        granted = sorted(scope.split()) if isinstance(scope, str) else None
+        return {"signed_in": True, "granted_scopes": granted,
                 "access_token_valid_for": max(0, int(tokens.get("expires_at", 0) - self._clock()))}

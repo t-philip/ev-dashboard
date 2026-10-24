@@ -26,6 +26,10 @@ def main(argv=None) -> int:
     if command == "status":
         info = manager.status()  # facts only, never a token value
         print("signed in" if info["signed_in"] else "not signed in")
+        if info.get("granted_scopes"):
+            print("granted scopes:", " ".join(info["granted_scopes"]))
+        elif info["signed_in"]:
+            print("granted scopes: not reported by the server")
         return 0
 
     server = make_server(App(settings.oauth, manager, auth.PendingSignIns()),
