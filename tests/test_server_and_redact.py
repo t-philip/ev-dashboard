@@ -214,6 +214,23 @@ class Live(unittest.TestCase):
         self.assertEqual(resp.getheader("Content-Security-Policy"),
                          "default-src 'none'; form-action 'self'")
 
+    def test_login_page_csp_allows_the_redirect_to_the_identity_provider(self):
+        # A browser applies the form page's form-action to the redirect that answers the post;
+        # a policy of 'self' alone silently blocks the hand-off to the provider.
+        self.start([])
+        page_csp = self.get("/auth/login").getheader("Content-Security-Policy")
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("POST", "/auth/login")
+        resp = conn.getresponse()
+        resp.read()
+        conn.close()
+        parts = urllib.parse.urlsplit(resp.getheader("Location"))
+        origin = f"{parts.scheme}://{parts.netloc}"
+        allowed = [s for d in page_csp.split(";") for s in d.split()[1:]
+                   if d.split()[0] == "form-action"]
+        self.assertIn(origin, allowed)
+        self.assertIn("'self'", allowed)
+
     def test_get_login_page_does_not_start_a_sign_in(self):
         self.start([])
         for _ in range(40):

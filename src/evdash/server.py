@@ -87,7 +87,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self._headers()
+        # A browser applies form-action to the redirect that answers the form post, so the
+        # sign-in page must allow the identity provider's origin as well as itself.
+        self._headers(f"'self' {self._authorize_origin()}")
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -112,12 +114,16 @@ class _Handler(BaseHTTPRequestHandler):
         self._redirect(303, "/auth/done")
 
     # -- responses --------------------------------------------------------
-    def _headers(self):
+    def _headers(self, form_action="'self'"):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Content-Security-Policy",
-                         "default-src 'none'; form-action 'self'")
+                         f"default-src 'none'; form-action {form_action}")
+
+    def _authorize_origin(self):
+        parts = urllib.parse.urlsplit(self.app.cfg.authorize_url)
+        return f"{parts.scheme}://{parts.netloc}"
 
     def _redirect(self, status, location):
         self.send_response(status)
