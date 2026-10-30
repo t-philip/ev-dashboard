@@ -1,12 +1,13 @@
-"""Command line: ``python -m evdash serve | status | refresh | poll | collect``."""
+"""Command line: ``python -m evdash serve | status | refresh | poll | collect | probe``."""
 from __future__ import annotations
 
+import json
 import logging
 import signal
 import sys
 import threading
 
-from . import auth, collector, config, redact, store
+from . import auth, collector, config, probe, redact, store
 from .server import App, make_server
 
 
@@ -42,14 +43,33 @@ def collect(command: str, settings: config.Settings, manager: auth.TokenManager)
         db.close()
 
 
+def explore(settings: config.Settings, manager: auth.TokenManager, paths) -> int:
+    """``probe [PATH...]``: what do the endpoints return? Shapes and status words only."""
+    chosen = list(paths) or list(probe.DEFAULT_PATHS)
+    db = store.Store(settings.db_path)
+    try:
+        worker = collector.Collector(manager, db, settings.api_key, base=settings.api_base,
+                                     budget=settings.daily_budget, vins=settings.vins)
+        for path, status, shape in worker.explore(chosen):
+            if status is None:  # nothing was asked, or no reply came: ``shape`` then holds the reason
+                print(f"{path} -> {shape if isinstance(shape, str) else 'no reply'}")
+                continue
+            print(f"{path} -> HTTP {status}")
+            print("   ", json.dumps(shape, sort_keys=True))
+        return 0
+    finally:
+        db.close()
+
+
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     command = args[0] if args else ""
-    if command not in ("serve", "status", "refresh", "poll", "collect"):
-        print("usage: python -m evdash serve | status | refresh | poll | collect", file=sys.stderr)
+    if command not in ("serve", "status", "refresh", "poll", "collect", "probe"):
+        print("usage: python -m evdash serve | status | refresh | poll | collect | probe [PATH...]",
+              file=sys.stderr)
         return 2
     try:
-        settings = config.load(need_api_key=command in ("poll", "collect"))
+        settings = config.load(need_api_key=command in ("poll", "collect", "probe"))
     except config.ConfigError as err:
         print(f"configuration error: {err}", file=sys.stderr)
         return 2
@@ -72,6 +92,9 @@ def main(argv=None) -> int:
 
     if command in ("poll", "collect"):
         return collect(command, settings, manager)
+
+    if command == "probe":
+        return explore(settings, manager, args[1:])
 
     server = make_server(App(settings.oauth, manager, auth.PendingSignIns(), settings.db_path),
                          settings.listen_host, settings.listen_port)

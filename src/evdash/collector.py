@@ -20,7 +20,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Callable, Dict, Mapping, Optional, Sequence, Tuple
 
-from . import auth, parse
+from . import auth, parse, probe
 from .store import Store
 
 log = logging.getLogger("evdash.collector")
@@ -160,6 +160,32 @@ class Collector:
                 log.warning("collection pass failed: %s", type(err).__name__)
                 wait = 60.0
             stop.wait(wait)
+
+    def explore(self, paths: Sequence[str]) -> list:
+        """GET each path once and return (path, status, shape). For finding out what an endpoint
+        holds: shapes and status words only, never values. Each request uses the daily budget."""
+        summary = {"failed": 0, "budget_spent": False}
+        vins = self._vehicles(summary)
+        if not vins:
+            return [("(no vehicle available)", None, None)]
+        results = []
+        for path in paths:
+            if results:
+                self._sleep(MIN_GAP)  # space requests out, whatever the previous one did
+            if not probe.valid_path(path):
+                results.append((path, None, "refused: not a plain path"))
+                continue
+            api = "energy" if path.startswith("/energy/") else "location" if path.startswith("/location/") else "connected"
+            if not self._store.take_call(self._day(), self._budget):
+                results.append((path, None, "stopped: daily budget spent"))
+                break
+            try:
+                status, payload, _ = self._request_negotiating(api, path.replace("{vin}", vins[0]))
+            except Exception as err:  # report the class only: its text could hold a header
+                results.append((path, None, f"failed: {type(err).__name__}"))
+                continue
+            results.append((path, status, probe.describe(payload, words=probe.shows_words(path))))
+        return results
 
     # --- internals ----------------------------------------------------------
 

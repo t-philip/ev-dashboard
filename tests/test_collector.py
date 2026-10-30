@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest import mock
 
 from evdash import __main__ as cli
-from evdash import auth, collector, config, parse, store
+from evdash import auth, collector, config, parse, probe, store
 
 # Fictitious values only: nothing here is, or resembles, real vehicle data or a credential.
 VIN = "TESTDATA0000000A1"
@@ -449,6 +449,117 @@ class CollectorBehaviour(unittest.TestCase):
         run_once.assert_not_called()
 
 
+class Probe(unittest.TestCase):
+    def test_describe_shows_shape_and_status_words_but_never_values(self):
+        reply = {"data": {"lock": {"value": "LOCKED", "unit": None, "timestamp": TS},
+                          "level": {"value": 41.5, "unit": "percentage"},
+                          "count": {"value": 7}, "vin": VIN, "name": "Test Data Car",
+                          "where": {"coordinates": [10.5, 20.25]}, "flag": True,
+                          "rows": [{"a": 1}, {"a": 2}], "none": None}}
+        shown = repr(probe.describe(reply))
+        for secret in (VIN, "Test Data Car", "10.5", "20.25", "41.5", TS):
+            self.assertNotIn(secret, shown)
+        self.assertIn("LOCKED", shown)  # a status word is shown
+        self.assertIn("'int'", shown)
+        self.assertIn("2 items", shown)
+
+    def test_an_all_letter_17_character_identifier_is_not_shown(self):
+        self.assertEqual(probe.describe("ABCDEFGHJKLMNPRST"), "str")
+        self.assertEqual(probe.describe("NO_WARNING"), "NO_WARNING")
+
+    def test_hostile_keys_and_depth_are_contained(self):
+        deep = cur = {}
+        for _ in range(30):
+            cur["k"] = {}
+            cur = cur["k"]
+        self.assertIn("...", repr(probe.describe(deep)))
+        self.assertIn("<key>", repr(probe.describe({"bad key!": 1})))
+
+    def test_identifier_like_keys_are_masked_and_field_names_kept(self):
+        shown = probe.describe({VIN: 1, "ABCDEFGHJKLMNPRST": 2, "x" * 41: 3, "k1234": 4,
+                                "batteryChargeLevel": 5, "tyre2": 6})
+        self.assertNotIn(VIN, repr(shown))
+        self.assertNotIn("ABCDEFGHJKLMNPRST", repr(shown))
+        self.assertNotIn("k1234", repr(shown))
+        self.assertNotIn("x" * 41, repr(shown))
+        self.assertIn("batteryChargeLevel", shown)
+        self.assertIn("tyre2", shown)
+
+    def test_all_capitals_text_is_never_shown_for_place_and_route_endpoints(self):
+        payload = {"data": {"destination": "TESTCITY", "state": "CLOSED"}}
+        for sensitive in ("/navigation/v1/vehicles/{vin}/route", "/location/v1/vehicles/{vin}/location",
+                          "/locations", "/Location/x", "/geofence", "/trips", "/connected-vehicle/v2/vehicles/{vin}",
+                          "/connected-vehicle/v2/vehicles/{vin}/environment", "/anything/new"):
+            self.assertFalse(probe.shows_words(sensitive), sensitive)  # words only for a known-safe list
+        for plain in ("/connected-vehicle/v2/vehicles/{vin}/doors", "/energy/v2/vehicles/{vin}/state"):
+            self.assertTrue(probe.shows_words(plain), plain)
+        masked = repr(probe.describe(payload, words=False))
+        self.assertNotIn("TESTCITY", masked)
+        self.assertNotIn("CLOSED", masked)
+        self.assertIn("TESTCITY", repr(probe.describe(payload)))  # the filter is the flag, not luck
+
+    def test_only_plain_paths_are_accepted(self):
+        for ok in ("/a/b-c_d/{vin}/e",):
+            self.assertTrue(probe.valid_path(ok))
+        for bad in ("a/b", "/a?x=1", "/a/../b", "/a b", "https://evil.example.test/x", "/a#f",
+                    "//evil.example.test/x", "/a/%2e%2e/b", "/a\nb"):
+            self.assertFalse(probe.valid_path(bad), bad)
+
+
+class Explore(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.db = store.Store(Path(self.tmp.name) / "test.db")
+        self.addCleanup(self.db.close)
+
+    def make(self, api, **kwargs):
+        return collector.Collector(FakeManager(), self.db, API_KEY, base="https://api.example.test",
+                                   vins=(VIN,), get=api, clock=Clock(), sleep=lambda s: None, **kwargs)
+
+    def test_each_path_is_requested_once_and_reported_without_values(self):
+        api = FakeApi({"/doors": (200, connected(centralLock=("LOCKED", None))), "/fuel": (403, {})})
+        got = self.make(api).explore(["/connected-vehicle/v2/vehicles/{vin}/doors",
+                                      "/connected-vehicle/v2/vehicles/{vin}/fuel"])
+        self.assertEqual([(p, s) for p, s, _ in got],
+                         [("/connected-vehicle/v2/vehicles/{vin}/doors", 200),
+                          ("/connected-vehicle/v2/vehicles/{vin}/fuel", 403)])
+        self.assertNotIn(VIN, repr(got))  # the placeholder is reported, never the VIN
+        self.assertEqual(len(api.requests), 2)
+        self.assertIn(VIN, api.requests[0][0])  # but the request itself used it
+
+    def test_a_bad_path_is_refused_without_a_request(self):
+        api = FakeApi()
+        got = self.make(api).explore(["https://evil.example.test/x", "/a/../b"])
+        self.assertEqual(api.requests, [])
+        self.assertTrue(all(s is None for _, s, _ in got))
+
+    def test_probing_spends_and_respects_the_budget(self):
+        api = FakeApi()
+        got = self.make(api, budget=2).explore(["/a/{vin}", "/b/{vin}", "/c/{vin}"])
+        self.assertEqual(len(api.requests), 2)
+        self.assertEqual(got[-1][2], "stopped: daily budget spent")
+        self.assertEqual(self.db.calls_on(collector._iso(T0)[:10]), 2)
+
+    def test_a_406_retry_while_probing_is_counted_too(self):
+        calls = []
+
+        def get(url, headers):
+            calls.append(headers["Accept"])
+            return 406, {}, {}
+        got = self.make(get, budget=10).explore(["/energy/v2/vehicles/{vin}/state"])
+        self.assertEqual(len(calls), len(collector.ACCEPT["energy"]))
+        self.assertEqual(self.db.calls_on(collector._iso(T0)[:10]), len(calls))
+        self.assertEqual(got[0][1], 406)
+
+    def test_an_exception_is_reported_by_class_only(self):
+        def boom(url, headers):
+            raise ValueError("Invalid header value " + headers["Authorization"])
+        got = self.make(boom).explore(["/a/{vin}"])
+        self.assertEqual(got[0][2], "failed: ValueError")
+        self.assertNotIn(TOKEN, repr(got))
+
+
 class Redirects(unittest.TestCase):
     """Credentials must never be re-sent to another address."""
 
@@ -528,6 +639,40 @@ class Commands(unittest.TestCase):
             self.assertEqual(self.run_cli("collect"), 0)
         forever.assert_called_once()
         self.assertEqual(handlers.call_count, 2)  # SIGTERM and SIGINT stop it cleanly
+
+    def test_probe_prints_shapes_and_never_the_vin_or_values(self):
+        import contextlib
+        import io
+
+        def get(url, headers):  # a hostile reply: the VIN and a name as values and as a key
+            return 200, {"data": {"centralLock": {"value": "LOCKED"}, "owner": "Test Data Person",
+                                  "vin": VIN, VIN: {"x": 1}, "odometer": {"value": 12345}}}, {}
+        out = io.StringIO()
+        # no network: the collector's request method is replaced, so nothing can leave this machine
+        with mock.patch.object(collector.Collector, "_request_negotiating",
+                               lambda self, api, path: get(path, {})), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(self.run_cli("probe", "/connected-vehicle/v2/vehicles/{vin}/doors",
+                                          env={**self.env, "EVDASH_VIN": VIN}), 0)
+        text = out.getvalue()
+        self.assertIn("HTTP 200", text)
+        self.assertIn("LOCKED", text)
+        for secret in (VIN, "Test Data Person", "12345", TOKEN, API_KEY):
+            self.assertNotIn(secret, text)
+
+    def test_a_refused_path_prints_its_reason_not_no_reply(self):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with mock.patch.object(collector.Collector, "_vehicles", return_value=(VIN,)), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(self.run_cli("probe", "https://evil.example.test/x"), 0)
+        self.assertIn("refused: not a plain path", out.getvalue())
+
+    def test_probe_without_paths_uses_the_default_list(self):
+        with mock.patch.object(collector.Collector, "explore", return_value=[]) as explore:
+            self.assertEqual(self.run_cli("probe"), 0)
+        explore.assert_called_once_with(list(probe.DEFAULT_PATHS))
 
     def test_unknown_command_is_a_usage_error(self):
         self.assertEqual(self.run_cli("bogus"), 2)
