@@ -9,6 +9,7 @@ out of places it could leak:
 """
 from __future__ import annotations
 
+import datetime
 import html
 import logging
 import re
@@ -17,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
 
-from . import auth, view
+from . import auth, tripviews, view
 
 log = logging.getLogger("evdash.server")
 
@@ -31,11 +32,14 @@ _PAGES = {
 
 class App:
     def __init__(self, cfg: auth.OAuthConfig, manager: auth.TokenManager,
-                 pending: auth.PendingSignIns, db_path: Optional[Path] = None):
+                 pending: auth.PendingSignIns, db_path: Optional[Path] = None,
+                 location: bool = False, tz: datetime.tzinfo = datetime.timezone.utc):
         self.cfg = cfg
         self.manager = manager
         self.pending = pending
         self.db_path = db_path  # the collector's database, read-only, for the state view
+        self.location = location  # opt-in: the trip pages exist only when location is turned on
+        self.tz = tz              # the time zone trip times are shown in
 
 
 def make_server(app: App, host: str, port: int) -> ThreadingHTTPServer:
@@ -70,6 +74,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._login_page()
         elif parts.path == "/auth/callback":
             self._callback(urllib.parse.parse_qs(parts.query))
+        elif parts.path == "/trips" or parts.path.startswith("/trips/"):
+            self._trips(parts)
         elif parts.path in _PAGES:
             title, text = _PAGES[parts.path]
             self._text(200, text, title=title)
@@ -114,12 +120,38 @@ class _Handler(BaseHTTPRequestHandler):
             "max-width:40rem;margin:2rem auto;padding:0 16px}"
             "code{font-size:.9em}a.button{display:inline-block;padding:.5rem 1rem;"
             "border:1px solid currentColor;border-radius:6px;text-decoration:none}"
-            "table{border-collapse:collapse}td{padding:.15rem .8rem .15rem 0}"
+            "table{border-collapse:collapse}td{padding:.15rem .8rem .15rem 0}.muted{opacity:.7}"
             "h3{margin:1.2rem 0 .3rem;font-size:1rem}"
             "</style><h1>EV Dashboard</h1>" + state
             + "<p><a class=button href=/auth/login>Sign in</a></p>"
-            + view.render(self.app.db_path) + "</html>").encode("utf-8")
+            + ("<p><a href=/trips>Trips</a></p>" if self.app.location else "")
+            + view.render(self.app.db_path, tz=self.app.tz) + "</html>").encode("utf-8")
         self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self._headers(styles=True)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _trips(self, parts):
+        if not self.app.location:
+            return self._html(404, tripviews.shell("Trips", tripviews.OFF))
+        try:
+            if parts.path == "/trips":
+                status, page = tripviews.render_list(
+                    self.app.db_path, urllib.parse.parse_qs(parts.query), self.app.tz)
+            else:
+                status, page = tripviews.render_detail(
+                    self.app.db_path, parts.path[len("/trips/"):], self.app.tz)
+        except Exception as err:  # only the class is logged: the message could hold stored data
+            log.warning("trip page failed: %s", type(err).__name__)
+            status, page = 500, tripviews.shell("Trips", "<p>Something went wrong reading the trips.</p>")
+        self._html(status, page)
+
+    def _html(self, status, page):
+        body = page.encode("utf-8")
+        self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self._headers(styles=True)

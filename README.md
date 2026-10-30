@@ -3,9 +3,10 @@
 A personal, self-hosted, **read-only** dashboard for your own electric vehicle's data:
 battery and range over time, charging sessions, trips and efficiency, and current status.
 
-> **Status: early pre-release (0.1.x).** It collects and stores readings and shows the current
-> state of one vehicle. Charts, charging-session and trip detection, and a location view are not
-> built yet. It has been run against one vehicle only. See [`docs/DESIGN_SPEC.md`](docs/DESIGN_SPEC.md)
+> **Status: early pre-release (0.2.x).** It collects and stores readings and shows the current
+> state of one vehicle, and, if you turn location on, a browsable history of trips (see *Trips*
+> below). Charts and charging-session detection are not built yet. It has been run against one
+> vehicle only. See [`docs/DESIGN_SPEC.md`](docs/DESIGN_SPEC.md)
 > for exactly what is and is not built or verified.
 
 Independent hobby project. Not affiliated with, endorsed by, or sponsored by Volvo Cars or any
@@ -20,7 +21,8 @@ other vehicle manufacturer.
   stop or otherwise control the vehicle.
 - **Bring your own credentials.** Every user registers their own developer application with the
   manufacturer and signs in with their own account. No credentials are shipped with this project.
-- **Location is opt-in.** If it is offered at all, it is off unless you turn it on.
+- **Location is opt-in.** It is off unless you turn it on, it is stored only on your machine, and
+  you set how long it is kept.
 - **Polite to the API.** Polling is designed around a fixed daily request budget below the
   manufacturer's limit.
 
@@ -57,7 +59,9 @@ Run `serve` and `collect` as two services sharing one database. Settings are env
 | `EVDASH_TOKEN_FILE` / `EVDASH_DB` | Where the sign-in tokens and the readings are stored (default under `data/`) |
 | `EVDASH_DAILY_BUDGET` | Most requests per UTC day (default 2000; the cap of 9000 is a safety margin under the manufacturer's documented default limit of 10,000 per API per day) |
 | `EVDASH_VIN` | Vehicle to use; if unset, the first vehicle on the account |
-| `EVDASH_LOCATION` | `1` to collect location; off by default |
+| `EVDASH_LOCATION` | `1` to collect location and show the trips pages; off by default. Needs `location:read` in `EVDASH_SCOPES` and a new sign-in |
+| `EVDASH_LOCATION_RETENTION_DAYS` | How long location readings are kept (default 365, at most 3650). Older ones are deleted once a day and the database file is then compacted (copies in backups or synced folders are not touched) |
+| `EVDASH_TIMEZONE` | Time zone name for the times on the trips pages (default `UTC`; needs the system's time zone data for any other) |
 
 Credentials are read from files, never from environment values: `client_id`, `client_secret` and
 `vcc_api_key`, either in the directory named by `CREDENTIALS_DIRECTORY` or at the paths in
@@ -67,6 +71,22 @@ process umask, so run the services with `UMask=0077` or equivalent. Keep `data/`
 files out of version control and out of shared backups. Your vehicle identification number is a
 personal identifier: `status` and `probe` never print it and the collector logs only its last four
 characters, but do not paste it into issues. Deleting the database file deletes every stored reading.
+
+### Trips
+
+With `EVDASH_LOCATION=1` the web page gains a **Trips** section: a month-by-month list and a page
+per trip. The manufacturer's documentation says its location API reports a position only when a
+trip ends and is not a history, so a *trip* here is the move between two consecutive reported stops
+(not yet verified against real trips). Each shows where it
+started and ended, the odometer distance, the battery change (flagged if the car was charged in
+between) and, when it was observed, the start time. **Routes are not available**: the maps show your
+stops to scale on a plain background, with a dashed straight line between a trip's two stops, and are
+drawn without any map service, so no coordinate leaves your machine when you view them. Each trip's
+page has two "show on a map" links to openstreetmap.org; nothing is sent unless you click one. History
+starts the day collection starts, and only the account's first vehicle is shown.
+
+**The trips pages show precise positions and, like the rest of the web page, have no login:** the same
+network-boundary rule applies, and it matters more here.
 
 ### First run
 

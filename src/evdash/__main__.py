@@ -27,7 +27,8 @@ def collect(command: str, settings: config.Settings, manager: auth.TokenManager)
     db = store.Store(settings.db_path)
     worker = collector.Collector(manager, db, settings.api_key, base=settings.api_base,
                                  budget=settings.daily_budget, vins=settings.vins,
-                                 location=settings.location)
+                                 location=settings.location,
+                                 location_retention_days=settings.location_retention_days)
     try:
         if command == "poll":
             summary = worker.run_once()
@@ -49,7 +50,8 @@ def explore(settings: config.Settings, manager: auth.TokenManager, paths) -> int
     db = store.Store(settings.db_path)
     try:
         worker = collector.Collector(manager, db, settings.api_key, base=settings.api_base,
-                                     budget=settings.daily_budget, vins=settings.vins)
+                                     budget=settings.daily_budget, vins=settings.vins,
+                                     location=settings.location)
         for path, status, shape in worker.explore(chosen):
             if status is None:  # nothing was asked, or no reply came: ``shape`` then holds the reason
                 print(f"{path} -> {shape if isinstance(shape, str) else 'no reply'}")
@@ -96,7 +98,8 @@ def main(argv=None) -> int:
     if command == "probe":
         return explore(settings, manager, args[1:])
 
-    server = make_server(App(settings.oauth, manager, auth.PendingSignIns(), settings.db_path),
+    server = make_server(App(settings.oauth, manager, auth.PendingSignIns(), settings.db_path,
+                             location=settings.location, tz=settings.tz),
                          settings.listen_host, settings.listen_port)
     logging.getLogger("evdash").info("listening on %s:%s", settings.listen_host,
                                      settings.listen_port)

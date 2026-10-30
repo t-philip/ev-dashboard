@@ -157,6 +157,9 @@ class FakeManager:
         self.error = error
         self.calls = 0
 
+    def status(self):
+        return {"signed_in": True, "granted_scopes": ["openid", "location:read"]}
+
     def access_token(self):
         self.calls += 1
         if self.error:
@@ -673,6 +676,28 @@ class Commands(unittest.TestCase):
         with mock.patch.object(collector.Collector, "explore", return_value=[]) as explore:
             self.assertEqual(self.run_cli("probe"), 0)
         explore.assert_called_once_with(list(probe.DEFAULT_PATHS))
+
+    def probe_location(self, enabled):
+        import contextlib
+        import io
+        env = {**self.env, "EVDASH_VIN": VIN}
+        if enabled:
+            env["EVDASH_LOCATION"] = "1"
+        out = io.StringIO()
+        status = {"signed_in": True, "granted_scopes": ["openid", "location:read"]}
+        reply = (200, {"data": {"geometry": {"coordinates": [20.0, 10.0]}}}, {})
+        with mock.patch.object(auth.TokenManager, "status", return_value=status), \
+                mock.patch.object(collector.Collector, "_request_negotiating", lambda self, api, path: reply), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(self.run_cli("probe", "/location/v1/vehicles/{vin}/location", env=env), 0)
+        return out.getvalue()
+
+    def test_the_probe_command_reaches_the_location_endpoint_only_when_location_is_on(self):
+        self.assertIn("refused: location is off or not granted", self.probe_location(enabled=False))
+        text = self.probe_location(enabled=True)
+        self.assertIn("HTTP 200", text)
+        self.assertNotIn("20.0", text)   # shapes only, never the coordinates
+        self.assertNotIn("10.0", text)
 
     def test_unknown_command_is_a_usage_error(self):
         self.assertEqual(self.run_cli("bogus"), 2)

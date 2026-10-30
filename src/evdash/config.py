@@ -6,6 +6,7 @@ from the file named by ``EVDASH_<NAME>_FILE``.
 """
 from __future__ import annotations
 
+import datetime
 import os
 import re
 from dataclasses import dataclass
@@ -35,6 +36,8 @@ class Settings:
     api_key: Optional[str] = None      # only loaded for the commands that call the vehicle APIs
     vins: Tuple[str, ...] = ()
     location: bool = False             # opt-in: location is never collected unless enabled
+    location_retention_days: int = 365
+    tz: datetime.tzinfo = datetime.timezone.utc   # how times are shown on the trip pages
 
 
 def read_credential(name: str, env: Mapping[str, str]) -> str:
@@ -54,6 +57,17 @@ def read_credential(name: str, env: Mapping[str, str]) -> str:
     if not value:
         raise ConfigError(f"credential '{name}' is empty")
     return value
+
+
+def resolve_timezone(name: str) -> datetime.tzinfo:
+    if name.upper() == "UTC":
+        return datetime.timezone.utc
+    try:
+        from zoneinfo import ZoneInfo
+        return ZoneInfo(name)
+    except Exception:
+        raise ConfigError("EVDASH_TIMEZONE must be UTC or a time zone name such as Region/City "
+                          "(the system needs its time zone data)") from None
 
 
 def load(env: Mapping[str, str] = os.environ, need_api_key: bool = False) -> Settings:
@@ -93,6 +107,13 @@ def load(env: Mapping[str, str] = os.environ, need_api_key: bool = False) -> Set
     vins = tuple(env.get("EVDASH_VIN", "").split())
     if not all(re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", v) for v in vins):
         raise ConfigError("EVDASH_VIN must list 17-character vehicle identification numbers")
+    try:
+        retention = int(env.get("EVDASH_LOCATION_RETENTION_DAYS", "365"))
+    except ValueError:
+        raise ConfigError("EVDASH_LOCATION_RETENTION_DAYS must be a whole number") from None
+    if not 1 <= retention <= 3650:
+        raise ConfigError("EVDASH_LOCATION_RETENTION_DAYS must be between 1 and 3650")
+    tz = resolve_timezone(env.get("EVDASH_TIMEZONE", "UTC"))
     return Settings(
         oauth, host or "127.0.0.1", port_number,
         Path(env.get("EVDASH_TOKEN_FILE", "data/tokens.json")),
@@ -101,4 +122,5 @@ def load(env: Mapping[str, str] = os.environ, need_api_key: bool = False) -> Set
         api_base=api_base,
         api_key=read_credential("vcc_api_key", env) if need_api_key else None,
         vins=vins,
-        location=env.get("EVDASH_LOCATION", "") == "1")
+        location=env.get("EVDASH_LOCATION", "") == "1",
+        location_retention_days=retention, tz=tz)

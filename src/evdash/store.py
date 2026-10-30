@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from pathlib import Path
-from typing import Iterable, List, NamedTuple, Optional
+from typing import Iterable, List, NamedTuple, Optional, Tuple
 
 from .parse import Reading
 
@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS group_state (
     PRIMARY KEY (vehicle, grp)
 );
 CREATE TABLE IF NOT EXISTS api_calls (day TEXT PRIMARY KEY, calls INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
 
@@ -93,6 +94,46 @@ class Store:
             "ON r.field = x.field AND r.source_ts = x.m WHERE r.vehicle = ? ORDER BY r.field",
             (vehicle, vehicle)).fetchall()
         return [Latest(*row) for row in rows]
+
+    def series(self, vehicle: str, field: str) -> List[Tuple[str, object]]:
+        """Every stored (source timestamp, value) of one field, oldest first."""
+        return [(ts, value) for ts, value in self._db.execute(
+            "SELECT source_ts, value FROM readings WHERE vehicle = ? AND field = ? ORDER BY source_ts",
+            (vehicle, field))]
+
+    def delete_older(self, field_prefix: str, cutoff_ts: str) -> int:
+        """Delete readings of fields starting with ``field_prefix`` older than ``cutoff_ts``."""
+        cursor = self._db.execute(
+            "DELETE FROM readings WHERE substr(field, 1, ?) = ? AND source_ts < ?",
+            (len(field_prefix), field_prefix, cutoff_ts))
+        if cursor.rowcount:
+            # Remembered in the database itself, in the same transaction, so a restart cannot lose it.
+            self._db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('compact_pending', '1')")
+        self._db.commit()
+        return cursor.rowcount
+
+    def compact_pending(self) -> bool:
+        """True while rows have been deleted and the file has not yet been compacted."""
+        row = self._db.execute("SELECT value FROM meta WHERE key = 'compact_pending'").fetchone()
+        return bool(row and row[0] == "1")
+
+    def fingerprint(self) -> Tuple[int, int]:
+        """(highest row id, row count): changes whenever readings are added or deleted."""
+        row = self._db.execute("SELECT COALESCE(MAX(id), 0), COUNT(*) FROM readings").fetchone()
+        return row[0], row[1]
+
+    def compact(self) -> None:
+        """Rewrite the database file so deleted rows no longer sit in free pages or the log.
+
+        VACUUM first: in write-ahead-log mode its result goes to the log, and only the checkpoint
+        that follows moves it into the main file and truncates the log.
+        """
+        self._db.execute("VACUUM")
+        row = self._db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        if row and row[0] != 0:  # busy: a reader blocked it, so the old pages may still be in the file
+            raise sqlite3.OperationalError("checkpoint was blocked by another connection")
+        self._db.execute("DELETE FROM meta WHERE key = 'compact_pending'")
+        self._db.commit()
 
     # --- vehicles -----------------------------------------------------------
 

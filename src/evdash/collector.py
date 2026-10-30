@@ -14,6 +14,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import sqlite3
 import threading
 import time
 import urllib.request
@@ -98,7 +99,7 @@ def _iso(epoch: float) -> str:
 class Collector:
     def __init__(self, manager: auth.TokenManager, store: Store, api_key: str, *,
                  base: str = DEFAULT_BASE, budget: int = DEFAULT_BUDGET,
-                 vins: Sequence[str] = (), location: bool = False,
+                 vins: Sequence[str] = (), location: bool = False, location_retention_days: int = 365,
                  get: HttpGet = http_get, clock: Callable[[], float] = time.time,
                  sleep: Callable[[float], None] = time.sleep,
                  groups: Sequence[Group] = GROUPS):
@@ -111,6 +112,11 @@ class Collector:
         self._budget = budget
         self._vins = tuple(vins)
         self._location = location
+        if not 1 <= location_retention_days <= 3650:
+            raise ValueError("location retention must be between 1 and 3650 days")
+        self._retention_days = location_retention_days
+        self._pruned_day = ""
+        self._warned_scope = False
         self._get = get
         self._clock = clock
         self._sleep = sleep
@@ -123,6 +129,7 @@ class Collector:
     def run_once(self) -> dict:
         """Poll everything that is due. Returns counts only: never a value or a token."""
         summary = {"polled": 0, "stored": 0, "failed": 0, "signed_in": True, "budget_spent": False}
+        self._prune()  # retention applies whether or not location is still being collected
         try:
             self._manager.access_token()
         except (auth.NotSignedIn, auth.TokenInvalid):
@@ -136,7 +143,7 @@ class Collector:
 
         for vin in self._vehicles(summary):
             for group in self._groups:
-                if group.location and not self._location:
+                if group.location and not self._location_allowed():
                     continue
                 state = self._store.state(vin, group.name)
                 if state and state.next_due > self._clock():
@@ -175,7 +182,11 @@ class Collector:
             if not probe.valid_path(path):
                 results.append((path, None, "refused: not a plain path"))
                 continue
-            api = "energy" if path.startswith("/energy/") else "location" if path.startswith("/location/") else "connected"
+            if path.lower().startswith("/location") and not self._location_allowed():
+                results.append((path, None, "refused: location is off or not granted"))
+                continue
+            lowered = path.lower()
+            api = "energy" if lowered.startswith("/energy/") else "location" if lowered.startswith("/location") else "connected"
             if not self._store.take_call(self._day(), self._budget):
                 results.append((path, None, "stopped: daily budget spent"))
                 break
@@ -186,6 +197,50 @@ class Collector:
                 continue
             results.append((path, status, probe.describe(payload, words=probe.shows_words(path))))
         return results
+
+    # --- location: opt-in, scope-checked, with a retention limit --------------------------------
+
+    def _location_allowed(self) -> bool:
+        """Location is collected only when enabled AND the sign-in actually grants it."""
+        if not self._location:
+            return False
+        status = getattr(self._manager, "status", None)
+        try:
+            granted = status().get("granted_scopes") if status is not None else None
+        except Exception:  # unreadable sign-in: do not ask for location
+            granted = None
+        if isinstance(granted, (list, tuple, set, frozenset)) and "location:read" in granted:
+            return True
+        if not self._warned_scope:
+            self._warned_scope = True
+            log.warning("location is enabled but %s: add location:read to EVDASH_SCOPES and sign in again",
+                        "the granted scopes are not known" if granted is None
+                        else "the sign-in does not include location:read")
+        return False
+
+    def _retention_cutoff(self) -> str:
+        """Location readings with an earlier timestamp are past the retention limit."""
+        return datetime.datetime.fromtimestamp(
+            self._clock() - self._retention_days * 86400, datetime.timezone.utc
+        ).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    def _prune(self) -> None:
+        """Once per UTC day, delete location readings older than the retention limit."""
+        today = self._day()
+        if today != self._pruned_day:
+            try:
+                removed = self._store.delete_older("location.", self._retention_cutoff())
+            except sqlite3.Error as err:   # a locked database must not stop a polling pass
+                log.warning("location retention pass failed: %s", type(err).__name__)
+                return
+            self._pruned_day = today
+            if removed:
+                log.info("removed %d location readings older than %d days", removed, self._retention_days)
+        try:
+            if self._store.compact_pending():  # remembered in the database: it survives a restart
+                self._store.compact()
+        except sqlite3.Error as err:  # until it succeeds, deleted positions may remain in the file
+            log.warning("compacting the database is postponed: %s", type(err).__name__)
 
     # --- internals ----------------------------------------------------------
 
@@ -262,11 +317,21 @@ class Collector:
             status, payload, headers = self._request_negotiating(group.api, group.path.format(vin=vin))
             if status == 200:
                 readings = group.parser(group.name, payload)
+                aged = 0
+                if group.location:
+                    # A car parked for longer than the retention period keeps reporting the same old
+                    # position: storing it would only be undone by the next daily delete.
+                    cutoff = self._retention_cutoff()
+                    kept = [r for r in readings if r.ts >= cutoff]
+                    aged, readings = len(readings) - len(kept), kept
                 stored = self._store.add_readings(vin, readings, _iso(now))
                 summary["stored"] += stored
                 self._store.set_state(vin, group.name, now + group.interval, 0, 200, _iso(now))
                 if readings:
                     log.info("poll %s ok: %d readings, %d new", group.name, len(readings), stored)
+                elif aged:
+                    log.info("poll %s ok: the reported position is older than the retention period; "
+                             "not stored", group.name)
                 else:  # a wrong path or header can still answer 200 with a body that holds nothing
                     log.warning("poll %s returned 200 but no usable readings: this vehicle may not "
                                 "support these fields, or the endpoint or its headers may be wrong",

@@ -16,8 +16,9 @@ pre-release (0.1.0) and will be revisited as the remaining phases are built.
 |---|---|
 | "A small web framework" (section 4) | None: the Python standard library only, no third-party dependencies |
 | Lightweight charts and history views (phases 2-4) | Not built. Only the current-state page exists |
-| Derived tables for charging sessions and trips | Not built. Raw readings are stored; derivation is future work |
-| Location view (phase 5) | Not built. Location can be collected when explicitly enabled, and is never shown on the home page |
+| Derived tables for charging sessions and trips | Not built as tables. Raw readings are stored and trips are worked out from them when a page is viewed; charging sessions are not derived yet |
+| Location view (phase 5) | Built as a trips history, not as a live or route map: trips are the moves between the positions the manufacturer reports at the end of each trip (it keeps no history and offers no route). Maps are drawn to scale on a plain background with no map service. Collection and the pages need `EVDASH_LOCATION=1` and the `location:read` scope; location is never on the home page |
+| Trip detection and efficiency (phase 4) | Partly built: trips, odometer distance and battery change. Efficiency (energy per distance) is not computed |
 | Not in the original design | A `probe` command that prints reply shapes without values, used to explore what the APIs return; an Accept-header negotiation on HTTP 406; refusal of redirects |
 | Request budget "well below" the limit | Default 2000 requests per UTC day, enforced by a single counter; a steady-state run uses roughly 750 |
 | Single owner, any vehicle | Run against one vehicle only; other models and regions are unverified |
@@ -153,16 +154,25 @@ It backs off on errors and never retries in a tight loop.
   **It has no login of its own:** the home page shows the stored vehicle state (odometer, door and
   window state, warnings, how recently the vehicle was used) to anyone who can reach it. Put it
   only behind a trusted network boundary (for example a private overlay network); never expose it
-  to the internet. Location is never shown on that page.
+  to the internet. Location is never shown on that page. The trips pages do show positions (to four
+  decimal places on a trip's page) and have the same lack of a login, so the same boundary applies.
+  Location readings are deleted after a configurable retention period (default 365 days) and the
+  database file is then compacted so they do not remain in free pages. The only link that leaves the
+  machine is an explicit "show on a map" link, which sends nothing until it is clicked. Each page
+  request opens the database and compares a fingerprint; the computed trips are cached until the
+  readings change, but a determined client on the private network could still cost CPU. Trips are
+  matched to odometer readings by time proximity (45 minutes); that is untested against real trips
+  and may show an unknown distance where readings are sparse.
 
 ## 8. Phases
 
-1. Auth and collector, raw storage, current-state view. **Done (0.1.0).**
+1. Auth and collector, raw storage, current-state view. **Done (0.1.0).** Trips history: 0.2.0.
 2. History charts for battery and range. Not started.
 3. Charging-session detection. Not started.
-4. Trip detection and efficiency. Not started.
-5. Location (opt-in): the collector can store it; no view yet.
-6. Packaging, documentation, first release. A first pre-release (0.1.0) exists; packaging is not done.
+4. Trip detection and efficiency. Trips, distance and battery change are built; efficiency is not.
+5. Location (opt-in): collection, retention and a trips history are built; routes are not available
+   from the manufacturer.
+6. Packaging, documentation, first release. Pre-releases (0.1.0, 0.2.0) exist; packaging is not done.
 
 ## 9. Design decisions
 
@@ -182,7 +192,9 @@ single-owner project.
 | Refresh tokens are never logged or printed | Built; covered by automated tests (access log, error lines, tracebacks, status output). Checked in a live deployment: no secret-shaped string in the service journals, no credential in any process environment or command line, token file readable by its owner only |
 | Rotated refresh token survives a crash during save | Built; covered by an automated test of the save path. Owner-only file permissions and the cross-process write lock are POSIX features: on Windows only an in-process lock applies and the permission test is skipped |
 | Charging sessions detected correctly | Not built, not verified |
-| Trips and efficiency detected correctly | Not built, not verified |
-| Location is off unless enabled | Built for collection (skipped unless `EVDASH_LOCATION=1`) and for display (never shown on the home page); covered by automated tests. No location view exists yet |
+| Trips and efficiency detected correctly | Trips are built (a trip is the move between two consecutive reported stops; distance from the odometer, battery change, start time when observed) and covered by automated tests on synthetic data. Efficiency is not built. Not yet verified against real trips |
+| Location older than the retention period is deleted and not recoverable from the database file | Built (daily delete, then the file is compacted); covered by an automated test that looks for a deleted value in the database files while the connection is still open, with a positive control; a pending compaction is remembered in the database so a restart does not lose it, and a checkpoint blocked by a reader is retried rather than reported as done. Copies in backups or synced folders, operating-system temporary files and freed disk blocks are outside its reach; the web process also keeps its computed trips in memory until the next change. A position already older than the retention period is not stored in the first place |
+| Trip pages load nothing from outside and expose nothing without being asked | Built (inline SVG maps, a strict content security policy, no query strings in logs); covered by automated tests |
+| Location is off unless enabled | Built for collection (skipped unless `EVDASH_LOCATION=1` and the scope is granted, failing closed when the scopes are unknown; the `probe` command refuses the location endpoint on the same condition) and for display (the trips pages do not exist when it is off; never on the home page); covered by automated tests |
 | A user can delete all stored data by deleting the database | Built (all collected data is in one SQLite file; the sign-in tokens are a separate file); not separately tested |
 | Vehicle data fields listed in section 3 are returned by the APIs | Not yet covered by an automated test in this repository |

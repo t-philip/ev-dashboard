@@ -22,6 +22,34 @@ class AgeText(unittest.TestCase):
         self.assertEqual(view.age_text("1999-03-05T00:00:00Z", NOW), "just now")
 
 
+class WhenText(unittest.TestCase):
+    def test_24_hour_clock_with_the_day_and_the_zone(self):
+        cases = {
+            "1999-03-04T14:05:00Z": "today 14:05 UTC",          # afternoon is 14:05, never 2:05 PM
+            "1999-03-04T00:07:00Z": "today 00:07 UTC",
+            "1999-03-03T23:30:00Z": "yesterday 23:30 UTC",
+            "1999-03-01T08:00:00Z": "Mon 01 Mar 08:00 UTC",
+            "1998-12-31T08:00:00Z": "Thu 31 Dec 1998 08:00 UTC",
+            "garbage": "unknown",
+        }
+        now = datetime.datetime(1999, 3, 4, 15, 0, tzinfo=datetime.timezone.utc)
+        for ts, expected in cases.items():
+            self.assertEqual(view.when_text(ts, now, datetime.timezone.utc), expected, ts)
+
+    def test_the_day_and_hour_follow_the_time_zone(self):
+        plus_2 = datetime.timezone(datetime.timedelta(hours=2), "TST")
+        now = datetime.datetime(1999, 3, 4, 15, 0, tzinfo=datetime.timezone.utc)   # 17:00 local
+        self.assertEqual(view.when_text("1999-03-03T10:00:00Z", now, plus_2), "yesterday 12:00 TST")
+        self.assertEqual(view.when_text("1999-03-04T22:30:00Z", now, plus_2), "Fri 05 Mar 00:30 TST")  # after midnight there
+        self.assertEqual(view.when_text("1999-03-03T22:30:00Z", now, plus_2), "today 00:30 TST")
+        self.assertEqual(view.when_text("1999-03-04T12:00:00Z", now, plus_2), "today 14:00 TST")
+
+    def test_a_timestamp_at_the_edge_of_the_calendar_is_unknown_not_an_error(self):
+        minus_14 = datetime.timezone(datetime.timedelta(hours=-14))
+        now = datetime.datetime(1999, 3, 4, 15, 0, tzinfo=datetime.timezone.utc)
+        self.assertEqual(view.when_text("0001-01-01T00:00:00Z", now, minus_14), "unknown")
+
+
 class Render(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -53,7 +81,9 @@ class Render(unittest.TestCase):
         self.assertIn("10 min ago", page)
         self.assertIn("LOCKED", page)
         self.assertIn("3 h ago", page)
-        self.assertIn("Last collected 5 min ago", page)
+        self.assertIn("Last collected today 05:55 UTC (5 min ago)", page)
+        self.assertIn("today 05:50 UTC", page)       # each value says when, not just how long ago
+        self.assertIn("today 03:00 UTC", page)
 
     def test_location_and_the_vin_are_never_shown(self):
         self.fill([parse.Reading("location.latitude", 20.25, "deg", "1999-03-04T05:50:00Z"),
