@@ -222,6 +222,53 @@ class CollectorBehaviour(unittest.TestCase):
             self.assertEqual(headers["vcc-api-key"], API_KEY)
             self.assertIn("Accept", headers)
 
+    def test_a_406_tries_the_next_accept_header_and_remembers_the_one_that_works(self):
+        seen = []
+
+        def get(url, headers):
+            if url.endswith("/state"):
+                seen.append(headers["Accept"])
+                if headers["Accept"] != collector.ACCEPT["energy"][1]:
+                    return 406, {}, {}
+            return 200, {}, {}
+        worker = self.make(get)
+        worker.run_once()
+        self.assertEqual(seen, list(collector.ACCEPT["energy"][:2]))  # second try worked, no third
+        self.clock.now += 400
+        worker.run_once()
+        self.assertEqual(seen[-1], collector.ACCEPT["energy"][1])  # the remembered one goes first
+        self.assertEqual(len(seen), 3)
+
+    def test_a_remembered_header_that_starts_failing_falls_back_to_the_others(self):
+        seen = []
+        replies = iter([406, 200, 406, 200])  # v2 no, v1 yes (remembered); later v1 no, v2 yes
+
+        def get(url, headers):
+            if url.endswith("/state"):
+                seen.append(headers["Accept"])
+                return next(replies), {}, {}
+            return 200, {}, {}
+        worker = self.make(get)
+        worker.run_once()
+        self.clock.now += 400
+        worker.run_once()
+        v2, v1 = collector.ACCEPT["energy"][:2]
+        self.assertEqual(seen, [v2, v1, v1, v2])
+
+    def test_every_accept_try_is_counted_against_the_budget(self):
+        calls = []
+
+        def get(url, headers):
+            calls.append(url)
+            return 406, {}, {}
+        worker = self.make(get, budget=2, groups=[collector.GROUPS[0]])
+        worker.run_once()
+        self.assertEqual(len(calls), 2)  # the first poll and one more try, then the budget stops it
+        self.assertEqual(self.db.calls_on(self._day()), 2)
+
+    def _day(self):
+        return collector._iso(self.clock())[:10]
+
     def test_nothing_is_polled_again_before_its_interval(self):
         api = FakeApi()
         worker = self.make(api)
@@ -277,7 +324,7 @@ class CollectorBehaviour(unittest.TestCase):
         api = FakeApi({"/doors": (200, {"data": {}})})
         with self.assertLogs("evdash.collector", level=logging.WARNING) as logs:
             self.make(api).run_once()
-        self.assertIn("doors returned 200 but no readings", "\n".join(logs.output))
+        self.assertIn("doors returned 200 but no usable readings", "\n".join(logs.output))
 
     def test_retry_after_is_honoured_on_any_status(self):
         api = FakeApi({"/doors": (503, {}, {"Retry-After": "7000"})})

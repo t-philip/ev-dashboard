@@ -35,10 +35,14 @@ SIGNED_OUT_WAIT = 300.0
 MAX_BACKOFF = 6 * 3600.0
 LIST_STATE = "_vehicle_list"  # group name under which the vehicle-list backoff is kept
 
+# Accept headers to try, in order, per API. A 406 means "not that one": the next is tried and the
+# one that works is remembered. Connected Vehicle is confirmed live with application/json.
 ACCEPT = {
-    "connected": "application/json",
-    "energy": "application/vnd.volvocars.api.energy.vehicledata.v1+json",
-    "location": "application/json",
+    "connected": ("application/json",),
+    "energy": ("application/vnd.volvocars.api.energy.vehicledata.v2+json",
+               "application/vnd.volvocars.api.energy.vehicledata.v1+json",
+               "application/json"),
+    "location": ("application/json", "application/vnd.volvocars.api.location.vehicledata.v1+json"),
 }
 VEHICLE_LIST_PATH = "/connected-vehicle/v2/vehicles"
 
@@ -67,7 +71,6 @@ GROUPS: Tuple[Group, ...] = (
     Group("warnings", "connected", _CV + "warnings", 21600, parse.parse_connected),
     Group("diagnostics", "connected", _CV + "diagnostics", 21600, parse.parse_connected),
     Group("brakes", "connected", _CV + "brakes", 21600, parse.parse_connected),
-    Group("engine", "connected", _CV + "engine", 21600, parse.parse_connected),
     Group("location", "location", "/location/v1/vehicles/{vin}/location", 900,
           parse.parse_location, location=True),
 )
@@ -113,6 +116,7 @@ class Collector:
         self._sleep = sleep
         self._groups = tuple(groups)
         self.budget_spent = False  # True once today's budget stopped a poll
+        self._accepted: Dict[str, str] = {}  # per API: the Accept header that last got a 200
 
     # --- one pass -----------------------------------------------------------
 
@@ -162,11 +166,28 @@ class Collector:
     def _day(self) -> str:
         return _iso(self._clock())[:10]
 
-    def _request(self, api: str, path: str):
+    def _request(self, api: str, path: str, accept: Optional[str] = None):
         """One GET with the access token and the application key. Never logs the URL (it holds the VIN)."""
         headers = {"Authorization": "Bearer " + self._manager.access_token(),
-                   "vcc-api-key": self._api_key, "Accept": ACCEPT[api]}
+                   "vcc-api-key": self._api_key, "Accept": accept or ACCEPT[api][0]}
         return self._get(self._base + path, headers)
+
+    def _request_negotiating(self, api: str, path: str):
+        """Like ``_request`` but, on 406, tries the next Accept header (each try uses budget)."""
+        remembered = self._accepted.get(api)
+        candidates = ACCEPT[api] if not remembered else (
+            (remembered,) + tuple(a for a in ACCEPT[api] if a != remembered))
+        for position, accept in enumerate(candidates):
+            if position and not self._store.take_call(self._day(), self._budget):
+                break  # no budget for another try
+            status, payload, headers = self._request(api, path, accept)
+            if status != 406:
+                if status == 200:
+                    self._accepted[api] = accept
+                return status, payload, headers
+            if position < len(candidates) - 1:
+                self._sleep(MIN_GAP)
+        return status, payload, headers
 
     def _vehicles(self, summary: dict):
         if self._vins:
@@ -210,7 +231,7 @@ class Collector:
         summary["polled"] += 1
         status, headers = None, {}
         try:
-            status, payload, headers = self._request(group.api, group.path.format(vin=vin))
+            status, payload, headers = self._request_negotiating(group.api, group.path.format(vin=vin))
             if status == 200:
                 readings = group.parser(group.name, payload)
                 stored = self._store.add_readings(vin, readings, _iso(now))
@@ -219,8 +240,9 @@ class Collector:
                 if readings:
                     log.info("poll %s ok: %d readings, %d new", group.name, len(readings), stored)
                 else:  # a wrong path or header can still answer 200 with a body that holds nothing
-                    log.warning("poll %s returned 200 but no readings: the endpoint, its headers "
-                                "or this vehicle's support for it may be wrong", group.name)
+                    log.warning("poll %s returned 200 but no usable readings: this vehicle may not "
+                                "support these fields, or the endpoint or its headers may be wrong",
+                                group.name)
                 return
         except auth.AuthError as err:  # its messages are fixed text: a status and an error code
             status = None
