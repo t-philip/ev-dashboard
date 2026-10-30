@@ -1,5 +1,7 @@
 import base64
+import contextlib
 import hashlib
+import io
 import json
 import logging
 import os
@@ -209,6 +211,29 @@ class TokenExchange(unittest.TestCase):
         with self.assertRaises(auth.TokenInvalid):
             self.manager(FakeIdP([(400, {"error": "invalid_grant"})])).access_token()
         self.assertEqual(self.store.path.read_text(), before)
+
+    def test_refresh_command_rotates_and_prints_no_token(self):
+        from evdash import __main__ as cli
+        self.store.save({"access_token": "test-data-a1", "refresh_token": "test-data-r1",
+                         "expires_at": 0})
+        idp = FakeIdP([(200, {"access_token": "test-data-a2", "refresh_token": "test-data-r2",
+                              "expires_in": 300})])
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.refresh(self.manager(idp)), 0)
+        self.assertNotIn("test-data", out.getvalue())
+        self.assertEqual(self.store.load()["refresh_token"], "test-data-r2")
+
+    def test_refresh_command_reports_a_dead_sign_in_without_detail(self):
+        from evdash import __main__ as cli
+        self.store.save({"access_token": "test-data-a1", "refresh_token": "test-data-r1",
+                         "expires_at": 0})
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            code = cli.refresh(self.manager(FakeIdP([(400, {"error": "invalid_grant"})])))
+        self.assertEqual(code, 1)
+        self.assertIn("invalid_grant", err.getvalue())
+        self.assertNotIn("test-data", err.getvalue())
 
     def test_not_signed_in(self):
         with self.assertRaises(auth.NotSignedIn):
