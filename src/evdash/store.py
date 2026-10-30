@@ -162,6 +162,12 @@ class Store:
             (vehicle, group, next_due, fails, last_http, last_ok))
         self._db.commit()
 
+    def last_poll(self, vehicle: str) -> Optional[str]:
+        """When the vehicle's APIs last answered successfully (any group), or None if never."""
+        row = self._db.execute(
+            "SELECT MAX(last_ok) FROM group_state WHERE vehicle = ?", (vehicle,)).fetchone()
+        return row[0] if row and row[0] else None
+
     # --- request budget -----------------------------------------------------
 
     def calls_on(self, day: str) -> int:

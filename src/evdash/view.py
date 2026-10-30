@@ -85,6 +85,7 @@ def render(db_path: Optional[Path], now: Optional[datetime.datetime] = None,
     try:
         vins = db.vehicles()
         rows = [r for r in db.latest(vins[0]) if not r.field.startswith("location.")] if vins else []
+        polled = db.last_poll(vins[0]) if vins else None
     except sqlite3.Error:
         return NO_DATA
     finally:
@@ -96,12 +97,18 @@ def render(db_path: Optional[Path], now: Optional[datetime.datetime] = None,
     for row in rows:
         group, _, name = row.field.partition(".")
         groups.setdefault(group, []).append((name, row))
-    newest = max((_parse(r.fetched_at) for r in rows if _parse(r.fetched_at)), default=None)
     out = ["<h2>Vehicle state</h2>"]
-    if newest:
-        stamp = newest.isoformat()
-        out.append(f"<p>Last collected {html.escape(when_text(stamp, now, tz))} "
-                   f"({html.escape(age_text(stamp, now))}).</p>")
+    if polled is None or _parse(polled) is None:  # no usable poll record: the newest stored value stands in
+        stored = max((_parse(r.fetched_at) for r in rows if _parse(r.fetched_at)), default=None)
+        polled = stored.isoformat() if stored else None
+    reported = max((r.source_ts for r in rows if _parse(r.source_ts)), key=_parse, default=None)
+    if polled:
+        out.append(f"<p>Last poll {html.escape(when_text(polled, now, tz))} "
+                   f"({html.escape(age_text(polled, now))}).")
+        if reported:
+            out.append(f" Newest report from the car {html.escape(when_text(reported, now, tz))} "
+                       f"({html.escape(age_text(reported, now))}).")
+        out.append("</p>")
     for group in sorted(groups):
         out.append(f"<h3>{html.escape(group)}</h3><table>")
         for name, row in groups[group]:

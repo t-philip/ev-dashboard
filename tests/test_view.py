@@ -81,9 +81,39 @@ class Render(unittest.TestCase):
         self.assertIn("10 min ago", page)
         self.assertIn("LOCKED", page)
         self.assertIn("3 h ago", page)
-        self.assertIn("Last collected today 05:55 UTC (5 min ago)", page)
+        self.assertIn("Last poll today 05:55 UTC (5 min ago)", page)   # no poll record: the newest stored value stands in
+        self.assertNotIn("Last collected today", page)
+        self.assertIn("Newest report from the car today 05:50 UTC (10 min ago)", page)
         self.assertIn("today 05:50 UTC", page)       # each value says when, not just how long ago
         self.assertIn("today 03:00 UTC", page)
+
+    def test_the_poll_time_is_when_the_apis_last_answered_not_when_a_value_was_last_new(self):
+        self.fill([parse.Reading("odometer.odometer", 1234, "km", "1999-03-04T03:00:00Z")])  # a parked car: old report
+        db = store.Store(self.path)
+        db.set_state(VIN, "odometer", 0.0, 0, 200, "1999-03-04T05:58:00Z")   # ...but polled two minutes ago
+        db.close()
+        page = view.render(self.path, NOW)
+        self.assertIn("Last poll today 05:58 UTC (2 min ago)", page)
+        self.assertIn("Newest report from the car today 03:00 UTC (3 h ago)", page)
+
+    def test_an_unreadable_poll_record_falls_back_and_a_missing_report_still_renders(self):
+        self.fill([parse.Reading("odometer.odometer", 1234, "km", "1999-03-04T03:00:00Z")])
+        db = store.Store(self.path)
+        db.set_state(VIN, "odometer", 0.0, 0, 200, "garbage")
+        db.close()
+        page = view.render(self.path, NOW)
+        self.assertIn("Last poll today 05:55 UTC (5 min ago)", page)  # the stored value's time stands in
+        self.assertNotIn("unknown", page)
+
+    def test_last_poll_reads_the_newest_successful_poll_of_the_vehicle_only(self):
+        db = store.Store(self.path)
+        self.addCleanup(db.close)
+        self.assertIsNone(db.last_poll(VIN))
+        db.set_state(VIN, "doors", 0.0, 0, 200, "1999-03-04T05:00:00Z")
+        db.set_state(VIN, "tyres", 0.0, 0, 200, "1999-03-04T05:30:00Z")
+        db.set_state(VIN, "tyres", 0.0, 1, 500, None)                  # a failure does not erase it
+        db.set_state("OTHER0000000000A1", "doors", 0.0, 0, 200, "1999-03-04T06:00:00Z")
+        self.assertEqual(db.last_poll(VIN), "1999-03-04T05:30:00Z")
 
     def test_location_and_the_vin_are_never_shown(self):
         self.fill([parse.Reading("location.latitude", 20.25, "deg", "1999-03-04T05:50:00Z"),
