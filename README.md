@@ -39,8 +39,7 @@ other vehicle manufacturer.
 
 ## Licence
 
-To be decided before the first release. Until then, no licence is granted for the contents beyond
-what GitHub's terms allow for viewing and forking.
+Licensed under [AGPL-3.0](LICENSE). Please credit **t-philip** if you use or share this.
 
 ## Author
 

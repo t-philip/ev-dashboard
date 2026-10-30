@@ -43,13 +43,15 @@ fail=0
 # This file necessarily contains every pattern it searches for, so it would
 # always flag itself. Reviewed as code, not scanned as prose.
 SELF_EXCLUDE=':(exclude)scripts/check_privacy.sh'
+# LICENSE is the unmodified upstream AGPL text (its "November 2007" and quoted defined terms are
+# not author-written content); it is excluded from the scan like this script itself.
 
 compute_added() {  # compute_added [extra pathspec excludes...] -> prints added lines
     local EXTRA=("$@") ADDED
     case "$MODE" in
     --all)    ADDED=$(git ls-files -- '*.py' '*.md' '*.js' '*.html' '*.yml' '*.json' '*.sh' '*.css' "${EXTRA[@]+"${EXTRA[@]}"}" \
                       | grep -v '\.min\.' | xargs -r grep -Hn '' 2>/dev/null) ;;
-    --staged) ADDED=$(git diff --cached -U0 -- . "$SELF_EXCLUDE" "${EXTRA[@]+"${EXTRA[@]}"}" | grep '^+' | grep -v '^+++') ;;
+    --staged) ADDED=$(git diff --cached -U0 -- . "$SELF_EXCLUDE" ':(exclude)LICENSE' "${EXTRA[@]+"${EXTRA[@]}"}" | grep '^+' | grep -v '^+++') ;;
     *)        # PRIVACY_BASE lets CI name the range it wants checked; locally
               # we compare against the published branch plus the working tree.
               if [ -n "${PRIVACY_BASE:-}" ]; then
@@ -58,9 +60,9 @@ compute_added() {  # compute_added [extra pathspec excludes...] -> prints added 
                   git fetch -q origin 2>/dev/null || true
                   base=$(git rev-parse --verify -q origin/main || git rev-parse HEAD)
               fi
-              ADDED=$(git diff -U0 "$base"...HEAD -- . "$SELF_EXCLUDE" "${EXTRA[@]+"${EXTRA[@]}"}" 2>/dev/null | grep '^+' | grep -v '^+++'
-                      git diff -U0 -- . "$SELF_EXCLUDE" "${EXTRA[@]+"${EXTRA[@]}"}" | grep '^+' | grep -v '^+++'
-                      git diff --cached -U0 -- . "$SELF_EXCLUDE" "${EXTRA[@]+"${EXTRA[@]}"}" | grep '^+' | grep -v '^+++') ;;
+              ADDED=$(git diff -U0 "$base"...HEAD -- . "$SELF_EXCLUDE" ':(exclude)LICENSE' "${EXTRA[@]+"${EXTRA[@]}"}" 2>/dev/null | grep '^+' | grep -v '^+++'
+                      git diff -U0 -- . "$SELF_EXCLUDE" ':(exclude)LICENSE' "${EXTRA[@]+"${EXTRA[@]}"}" | grep '^+' | grep -v '^+++'
+                      git diff --cached -U0 -- . "$SELF_EXCLUDE" ':(exclude)LICENSE' "${EXTRA[@]+"${EXTRA[@]}"}" | grep '^+' | grep -v '^+++') ;;
     esac
     printf '%s\n' "$ADDED"
 }
