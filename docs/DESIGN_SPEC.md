@@ -4,9 +4,11 @@
 SQLite storage and a current-state view are built; charging-session and trip detection, history
 charts and location views are not. Section 10 gives the status per item. This document records
 the design decisions and the constraints behind them. Section 10 states which acceptance criteria
-are verified: the collector has been tested only against fake API replies, so the endpoint paths and
-request headers it uses are **not yet confirmed against a live account**. It will be reconciled
-against the as-built code before the first release.
+are verified. Checked against a real account: sign-in and token refresh, and the Connected Vehicle and
+Energy requests, each of which returned readings that were stored and displayed. Not checked: the
+Location request (location is opt-in and off by default), and every value's accuracy against the
+vehicle's own display. Section 10 is current as of this revision; the document will be reconciled
+against the as-built code once more before the first release.
 
 ## 1. Purpose and scope
 
@@ -153,13 +155,13 @@ single-owner project.
 
 | Criterion | Status |
 |---|---|
-| Collector stores every reading with its timestamp | Built (one row per vehicle, field and source timestamp; timestamps normalised to UTC); covered by automated tests against fake API replies. Not verified against the live API |
-| Daily request budget is enforced in code | Built (a single atomic counter per UTC day, a hard upper bound on the setting, a persisted schedule so a restart does not re-poll, and a backoff for failures and for the vehicle-list call); covered by automated tests. Not verified live |
+| Collector stores every reading with its timestamp | Built (one row per vehicle, field and source timestamp; timestamps normalised to UTC); covered by automated tests, and run against a real account for the Connected Vehicle and Energy APIs (the stored rows were checked in the database). Not yet verified for Location |
+| Daily request budget is enforced in code | Built (a single atomic counter per UTC day, a hard upper bound on the setting, a persisted schedule so a restart does not re-poll, and a backoff for failures and for the vehicle-list call); covered by automated tests; one live collection pass stayed far inside the budget. A longer run is not yet observed |
 | The collector keeps running through bad replies and storage faults | Built (every poll and every pass is isolated; only the exception class is logged); covered by automated tests |
 | Credentials are never sent to another address | Built (redirects are refused); covered by an automated test |
-| Current state and its age are shown | Built (home page, read-only database access, location never shown there); covered by automated tests. Not verified with live data |
-| OAuth sign-in with PKCE completes and tokens refresh unattended | Built; verified by automated tests against a fake identity provider only. Not yet verified against the real provider |
-| Refresh tokens are never logged or printed | Built; covered by automated tests (access log, error lines, tracebacks, status output). Not yet verified in a live deployment |
+| Current state and its age are shown | Built (home page, read-only database access, location never shown there); covered by automated tests; the page was viewed once with real data |
+| OAuth sign-in with PKCE completes and tokens refresh unattended | Built; covered by automated tests against a fake identity provider, and verified against the real provider: sign-in completed, the access token refreshes on use, and a rotated refresh token was saved and reused |
+| Refresh tokens are never logged or printed | Built; covered by automated tests (access log, error lines, tracebacks, status output). Checked in a live deployment: no secret-shaped string in the service journals, no credential in any process environment or command line, token file readable by its owner only |
 | Rotated refresh token survives a crash during save | Built; covered by an automated test of the save path. Owner-only file permissions and the cross-process write lock are POSIX features: on Windows only an in-process lock applies and the permission test is skipped |
 | Charging sessions detected correctly | Not built, not verified |
 | Trips and efficiency detected correctly | Not built, not verified |

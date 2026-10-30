@@ -4,10 +4,10 @@ The APIs return only the latest value of each field, so history exists only beca
 process writes it down. It never exceeds a configured daily request budget, spaces its requests
 out, and backs off after errors instead of retrying in a tight loop.
 
-The endpoint paths and Accept headers below follow the manufacturer's published API layout and
-have not yet been confirmed against a live account (see docs/DESIGN_SPEC.md section 10). A wrong
-one normally shows as a non-200 status in the log; a 200 reply that yields no readings is logged
-as a warning too. Only 200 replies are parsed.
+The Connected Vehicle and Energy endpoints and headers below are confirmed against a live account;
+the Location endpoint is not (location is opt-in and off by default). A wrong one normally shows
+as a non-200 status in the log; a 200 reply that yields no readings is logged as a warning too.
+Only 200 replies are parsed.
 """
 from __future__ import annotations
 
@@ -183,6 +183,8 @@ class Collector:
             status, payload, headers = self._request(api, path, accept)
             if status != 406:
                 if status == 200:
+                    if self._accepted.get(api) != accept:
+                        log.info("%s API: using Accept %s", api, accept)
                     self._accepted[api] = accept
                 return status, payload, headers
             if position < len(candidates) - 1:
