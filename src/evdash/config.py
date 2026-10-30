@@ -7,11 +7,13 @@ from the file named by ``EVDASH_<NAME>_FILE``.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping, Optional
+from typing import Mapping, Optional, Tuple
 
 from .auth import OAuthConfig
+from .collector import DEFAULT_BASE, DEFAULT_BUDGET, MAX_BUDGET
 
 DEFAULT_AUTHORIZE_URL = "https://volvoid.eu.volvocars.com/as/authorization.oauth2"
 DEFAULT_TOKEN_URL = "https://volvoid.eu.volvocars.com/as/token.oauth2"
@@ -27,6 +29,12 @@ class Settings:
     listen_host: str
     listen_port: int
     token_file: Path
+    db_path: Path = Path("data/evdash.db")
+    daily_budget: int = DEFAULT_BUDGET
+    api_base: str = DEFAULT_BASE
+    api_key: Optional[str] = None      # only loaded for the commands that call the vehicle APIs
+    vins: Tuple[str, ...] = ()
+    location: bool = False             # opt-in: location is never collected unless enabled
 
 
 def read_credential(name: str, env: Mapping[str, str]) -> str:
@@ -48,7 +56,7 @@ def read_credential(name: str, env: Mapping[str, str]) -> str:
     return value
 
 
-def load(env: Mapping[str, str] = os.environ) -> Settings:
+def load(env: Mapping[str, str] = os.environ, need_api_key: bool = False) -> Settings:
     redirect = env.get("EVDASH_REDIRECT_URI", "")
     if not redirect.startswith("https://"):
         raise ConfigError("EVDASH_REDIRECT_URI must be an https:// address")
@@ -73,5 +81,24 @@ def load(env: Mapping[str, str] = os.environ) -> Settings:
         token_url=token,
         scopes=scopes,
     )
-    return Settings(oauth, host or "127.0.0.1", port_number,
-                    Path(env.get("EVDASH_TOKEN_FILE", "data/tokens.json")))
+    try:
+        budget = int(env.get("EVDASH_DAILY_BUDGET", str(DEFAULT_BUDGET)))
+    except ValueError:
+        raise ConfigError("EVDASH_DAILY_BUDGET must be a whole number") from None
+    if not 1 <= budget <= MAX_BUDGET:
+        raise ConfigError(f"EVDASH_DAILY_BUDGET must be between 1 and {MAX_BUDGET}")
+    api_base = env.get("EVDASH_API_BASE", DEFAULT_BASE)
+    if not api_base.startswith("https://"):
+        raise ConfigError("EVDASH_API_BASE must be an https:// address")
+    vins = tuple(env.get("EVDASH_VIN", "").split())
+    if not all(re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", v) for v in vins):
+        raise ConfigError("EVDASH_VIN must list 17-character vehicle identification numbers")
+    return Settings(
+        oauth, host or "127.0.0.1", port_number,
+        Path(env.get("EVDASH_TOKEN_FILE", "data/tokens.json")),
+        db_path=Path(env.get("EVDASH_DB", "data/evdash.db")),
+        daily_budget=budget,
+        api_base=api_base,
+        api_key=read_credential("vcc_api_key", env) if need_api_key else None,
+        vins=vins,
+        location=env.get("EVDASH_LOCATION", "") == "1")

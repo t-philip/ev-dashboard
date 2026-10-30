@@ -1,10 +1,12 @@
-"""Command line: ``python -m evdash serve | status | refresh``."""
+"""Command line: ``python -m evdash serve | status | refresh | poll | collect``."""
 from __future__ import annotations
 
 import logging
+import signal
 import sys
+import threading
 
-from . import auth, config, redact
+from . import auth, collector, config, redact, store
 from .server import App, make_server
 
 
@@ -19,20 +21,42 @@ def refresh(manager: auth.TokenManager) -> int:
     return 0
 
 
+def collect(command: str, settings: config.Settings, manager: auth.TokenManager) -> int:
+    """``poll``: one pass, counts only. ``collect``: run until stopped."""
+    db = store.Store(settings.db_path)
+    worker = collector.Collector(manager, db, settings.api_key, base=settings.api_base,
+                                 budget=settings.daily_budget, vins=settings.vins,
+                                 location=settings.location)
+    try:
+        if command == "poll":
+            summary = worker.run_once()
+            print("poll finished:", ", ".join(f"{k}={v}" for k, v in sorted(summary.items())))
+            return 0 if summary["signed_in"] else 1
+        stop = threading.Event()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            signal.signal(sig, lambda *_: stop.set())
+        logging.getLogger("evdash").info("collecting (daily budget %d)", settings.daily_budget)
+        worker.run_forever(stop)
+        return 0
+    finally:
+        db.close()
+
+
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     command = args[0] if args else ""
-    if command not in ("serve", "status", "refresh"):
-        print("usage: python -m evdash serve | status | refresh", file=sys.stderr)
+    if command not in ("serve", "status", "refresh", "poll", "collect"):
+        print("usage: python -m evdash serve | status | refresh | poll | collect", file=sys.stderr)
         return 2
     try:
-        settings = config.load()
+        settings = config.load(need_api_key=command in ("poll", "collect"))
     except config.ConfigError as err:
         print(f"configuration error: {err}", file=sys.stderr)
         return 2
-    redact.install(known=(settings.oauth.client_id, settings.oauth.client_secret))
-    store = auth.TokenStore(settings.token_file)
-    manager = auth.TokenManager(settings.oauth, store)
+    redact.install(known=(settings.oauth.client_id, settings.oauth.client_secret,
+                          settings.api_key or "") + settings.vins)
+    token_store = auth.TokenStore(settings.token_file)
+    manager = auth.TokenManager(settings.oauth, token_store)
 
     if command == "status":
         info = manager.status()  # facts only, never a token value
@@ -46,7 +70,10 @@ def main(argv=None) -> int:
     if command == "refresh":
         return refresh(manager)
 
-    server = make_server(App(settings.oauth, manager, auth.PendingSignIns()),
+    if command in ("poll", "collect"):
+        return collect(command, settings, manager)
+
+    server = make_server(App(settings.oauth, manager, auth.PendingSignIns(), settings.db_path),
                          settings.listen_host, settings.listen_port)
     logging.getLogger("evdash").info("listening on %s:%s", settings.listen_host,
                                      settings.listen_port)

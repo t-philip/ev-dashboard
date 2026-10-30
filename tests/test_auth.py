@@ -263,7 +263,7 @@ class PostFormRetry(unittest.TestCase):
 
     def _call(self, effects):
         import urllib.error
-        with mock.patch("evdash.auth.urllib.request.urlopen", side_effect=effects) as urlopen, \
+        with mock.patch("evdash.auth._open", side_effect=effects) as urlopen, \
                 mock.patch("evdash.auth.time.sleep"):
             try:
                 return auth.post_form("https://idp.example.test/token", {"a": "b"}, {}), urlopen.call_count

@@ -1,9 +1,12 @@
 # EV Dashboard - Design Specification
 
-**Status: DRAFT (early implementation).** Only the sign-in module is built (section 5); the
-collector, storage and web views described below are not. Section 10 gives the status per item. This document records
+**Status: DRAFT (early implementation).** The sign-in module (section 5), the collector, the
+SQLite storage and a current-state view are built; charging-session and trip detection, history
+charts and location views are not. Section 10 gives the status per item. This document records
 the design decisions and the constraints behind them. Section 10 states which acceptance criteria
-are verified; none is verified against a live deployment yet. It will be reconciled against the as-built code before the first release.
+are verified: the collector has been tested only against fake API replies, so the endpoint paths and
+request headers it uses are **not yet confirmed against a live account**. It will be reconciled
+against the as-built code before the first release.
 
 ## 1. Purpose and scope
 
@@ -127,6 +130,10 @@ It backs off on errors and never retries in a tight loop.
 - Secrets live only in a protected file or the environment, never in the repository. The repository
   carries an automated privacy check and a contribution rule; see [`PRIVACY.md`](PRIVACY.md).
 - The web UI is intended for a private network and binds to a private interface by default.
+  **It has no login of its own:** the home page shows the stored vehicle state (odometer, door and
+  window state, warnings, how recently the vehicle was used) to anyone who can reach it. Put it
+  only behind a trusted network boundary (for example a private overlay network); never expose it
+  to the internet. Location is never shown on that page.
 
 ## 8. Phases
 
@@ -146,13 +153,16 @@ single-owner project.
 
 | Criterion | Status |
 |---|---|
-| Collector stores every reading with its timestamp | Not built, not verified |
-| Daily request budget is enforced in code | Not built, not verified |
+| Collector stores every reading with its timestamp | Built (one row per vehicle, field and source timestamp; timestamps normalised to UTC); covered by automated tests against fake API replies. Not verified against the live API |
+| Daily request budget is enforced in code | Built (a single atomic counter per UTC day, a hard upper bound on the setting, a persisted schedule so a restart does not re-poll, and a backoff for failures and for the vehicle-list call); covered by automated tests. Not verified live |
+| The collector keeps running through bad replies and storage faults | Built (every poll and every pass is isolated; only the exception class is logged); covered by automated tests |
+| Credentials are never sent to another address | Built (redirects are refused); covered by an automated test |
+| Current state and its age are shown | Built (home page, read-only database access, location never shown there); covered by automated tests. Not verified with live data |
 | OAuth sign-in with PKCE completes and tokens refresh unattended | Built; verified by automated tests against a fake identity provider only. Not yet verified against the real provider |
 | Refresh tokens are never logged or printed | Built; covered by automated tests (access log, error lines, tracebacks, status output). Not yet verified in a live deployment |
 | Rotated refresh token survives a crash during save | Built; covered by an automated test of the save path. Owner-only file permissions and the cross-process write lock are POSIX features: on Windows only an in-process lock applies and the permission test is skipped |
 | Charging sessions detected correctly | Not built, not verified |
 | Trips and efficiency detected correctly | Not built, not verified |
-| Location is off unless enabled | Not built, not verified |
-| A user can delete all stored data by deleting the database | Not built, not verified |
+| Location is off unless enabled | Built for collection (skipped unless `EVDASH_LOCATION=1`) and for display (never shown on the home page); covered by automated tests. No location view exists yet |
+| A user can delete all stored data by deleting the database | Built (all collected data is in one SQLite file; the sign-in tokens are a separate file); not separately tested |
 | Vehicle data fields listed in section 3 are returned by the APIs | Not yet covered by an automated test in this repository |

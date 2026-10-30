@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import hashlib
+import http.client
 import json
 import os
 import re
@@ -22,7 +23,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, Optional, Tuple
+from typing import Callable, Dict, Mapping, Optional, Tuple
 
 try:  # POSIX only; on other platforms the in-process lock still applies
     import fcntl
@@ -124,7 +125,46 @@ class PendingSignIns:
             del self._items[key]
 
 
-# --- token endpoint ---------------------------------------------------------
+# --- HTTP ---------------------------------------------------------------------
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Refuse redirects: credentials must never be re-sent to another address."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect())
+
+
+def _open(request: urllib.request.Request, timeout: float):
+    return _OPENER.open(request, timeout=timeout)
+
+
+def fetch(request: urllib.request.Request, timeout: float = 15.0,
+          what: str = "token endpoint") -> Tuple[int, bytes, Mapping[str, str]]:
+    """Open ``request``; returns (status, body, headers). Retries only a failed name lookup.
+
+    A failed lookup means the request has not left this host, so repeating it cannot spend a
+    rotating refresh token twice. (A redirect to another host that then fails to resolve is the
+    one theoretical exception; redirects are refused outright.) Any later failure is
+    not retried. Failures raise ``AuthError`` naming only ``what``.
+    """
+    attempts = max(1, DNS_ATTEMPTS)
+    for attempt in range(1, attempts + 1):
+        try:
+            with _open(request, timeout) as response:
+                return response.status, response.read(1 << 20), getattr(response, "headers", {})
+        except urllib.error.HTTPError as err:
+            return err.code, err.read(1 << 20), err.headers
+        except (urllib.error.URLError, OSError, http.client.HTTPException) as err:
+            lookup_failed = isinstance(getattr(err, "reason", err), socket.gaierror)
+            if lookup_failed and attempt < attempts:
+                time.sleep(DNS_RETRY_PAUSE)
+                continue
+            raise AuthError(f"{what} unreachable") from None
+    raise AuthError(f"{what} unreachable")  # unreachable: the loop always returns or raises
+
 
 def post_form(url: str, data: Dict[str, str], headers: Dict[str, str],
               timeout: float = 15.0) -> Tuple[int, dict]:
@@ -133,25 +173,7 @@ def post_form(url: str, data: Dict[str, str], headers: Dict[str, str],
         url, data=body, method="POST",
         headers={"Content-Type": "application/x-www-form-urlencoded",
                  "Accept": "application/json", **headers})
-    attempts = max(1, DNS_ATTEMPTS)
-    for attempt in range(1, attempts + 1):
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                status, raw = response.status, response.read(1 << 20)
-            break
-        except urllib.error.HTTPError as err:
-            status, raw = err.code, err.read(1 << 20)
-            break
-        except (urllib.error.URLError, OSError) as err:
-            # Only a failed name lookup is retried: the request has not left this host, so
-            # repeating it cannot spend a rotating refresh token twice. (A redirect to another
-            # host that then fails to resolve is the one theoretical exception; the token
-            # endpoint does not redirect.) Any later failure is not retried.
-            lookup_failed = isinstance(getattr(err, "reason", err), socket.gaierror)
-            if lookup_failed and attempt < attempts:
-                time.sleep(DNS_RETRY_PAUSE)
-                continue
-            raise AuthError("token endpoint unreachable") from None
+    status, raw, _ = fetch(request, timeout, "token endpoint")
     try:
         payload = json.loads(raw)
     except ValueError:

@@ -14,8 +14,10 @@ import logging
 import re
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Optional
 
-from . import auth
+from . import auth, view
 
 log = logging.getLogger("evdash.server")
 
@@ -29,10 +31,11 @@ _PAGES = {
 
 class App:
     def __init__(self, cfg: auth.OAuthConfig, manager: auth.TokenManager,
-                 pending: auth.PendingSignIns):
+                 pending: auth.PendingSignIns, db_path: Optional[Path] = None):
         self.cfg = cfg
         self.manager = manager
         self.pending = pending
+        self.db_path = db_path  # the collector's database, read-only, for the state view
 
 
 def make_server(app: App, host: str, port: int) -> ThreadingHTTPServer:
@@ -86,8 +89,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _home(self):
         """The landing page: whether the owner is signed in, and what was granted.
 
-        Shows facts about the sign-in only: never a token, and no vehicle data (none is
-        collected yet).
+        Shows facts about the sign-in (never a token) and the latest stored vehicle state.
         """
         try:
             info = self.app.manager.status()
@@ -112,9 +114,11 @@ class _Handler(BaseHTTPRequestHandler):
             "max-width:40rem;margin:2rem auto;padding:0 16px}"
             "code{font-size:.9em}a.button{display:inline-block;padding:.5rem 1rem;"
             "border:1px solid currentColor;border-radius:6px;text-decoration:none}"
+            "table{border-collapse:collapse}td{padding:.15rem .8rem .15rem 0}"
+            "h3{margin:1.2rem 0 .3rem;font-size:1rem}"
             "</style><h1>EV Dashboard</h1>" + state
             + "<p><a class=button href=/auth/login>Sign in</a></p>"
-            "<p>No vehicle data is collected yet.</p></html>").encode("utf-8")
+            + view.render(self.app.db_path) + "</html>").encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
