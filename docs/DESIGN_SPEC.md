@@ -7,8 +7,20 @@ the design decisions and the constraints behind them. Section 10 states which ac
 are verified. Checked against a real account: sign-in and token refresh, and the Connected Vehicle and
 Energy requests, each of which returned readings that were stored and displayed. Not checked: the
 Location request (location is opt-in and off by default), and every value's accuracy against the
-vehicle's own display. Section 10 is current as of this revision; the document will be reconciled
-against the as-built code once more before the first release.
+vehicle's own display. Section 10 and the table below were reconciled against the as-built code for the first
+pre-release (0.1.0) and will be revisited as the remaining phases are built.
+
+### Where the build differs from the original design
+
+| Original design | As built |
+|---|---|
+| "A small web framework" (section 4) | None: the Python standard library only, no third-party dependencies |
+| Lightweight charts and history views (phases 2-4) | Not built. Only the current-state page exists |
+| Derived tables for charging sessions and trips | Not built. Raw readings are stored; derivation is future work |
+| Location view (phase 5) | Not built. Location can be collected when explicitly enabled, and is never shown on the home page |
+| Not in the original design | A `probe` command that prints reply shapes without values, used to explore what the APIs return; an Accept-header negotiation on HTTP 406; refusal of redirects |
+| Request budget "well below" the limit | Default 2000 requests per UTC day, enforced by a single counter; a steady-state run uses roughly 750 |
+| Single owner, any vehicle | Run against one vehicle only; other models and regions are unverified |
 
 ## 1. Purpose and scope
 
@@ -62,7 +74,9 @@ optional. These are the groups the design relies on.
   status (status only, no pressure values); brake-fluid and washer-fluid warnings.
 - **Location API:** coordinates, altitude and heading.
 
-Some fields can be reported as unsupported, unspecified or empty (for example charging limits,
+The manufacturer's public specification maps no endpoint to some scopes the application may be
+registered with (for example environment, navigation and connectivity status); this project does not
+request them. Some fields can be reported as unsupported, unspecified or empty (for example charging limits,
 light and fluid warnings, and some average-consumption values), and charging power may be present
 only while charging. The application must handle all of these, and must not assume a field exists.
 
@@ -76,8 +90,8 @@ manufacturer APIs  <-HTTPS-  collector  ->  SQLite  <-  web UI (read-only views)
                               +-- auth module (OAuth 2.0, tokens in a protected file)
 ```
 
-- **Language and stack:** Python, SQLite, a small web framework with a server-rendered UI and
-  lightweight charts. To be confirmed at implementation time.
+- **Language and stack (as built):** Python 3.12+ using only the standard library, SQLite, and a
+  server-rendered page. No charts yet.
 - **One process or two:** a collector service and a web service that share the database. They are
   separate so a UI fault never stops collection.
 - **Storage:** one table of raw readings (vehicle, field, value, unit, source timestamp, fetched-at)
@@ -119,9 +133,13 @@ manufacturer APIs  <-HTTPS-  collector  ->  SQLite  <-  web UI (read-only views)
 
 ## 6. Polling and the request budget
 
-Each full poll costs roughly a dozen API calls. The collector assigns each field group an interval
-(for example frequent for charging and lock state, rare for odometer and location) and **refuses to
-exceed a configured daily budget**, defaulting well below the manufacturer's limit. When the budget is spent it stops and says so in the UI.
+Each full pass costs roughly a dozen API calls, and the default schedule below comes to roughly 750
+a day in steady state. The collector assigns each field group an interval and **refuses to exceed a
+configured daily budget** (default 2000 requests per UTC day, a hard cap of 9000), below the
+manufacturer's documented default limit of 10,000 per API per day.
+As built: energy state every 5 minutes; engine status and doors every 10; windows, odometer and
+statistics every 30; tyres, warnings, diagnostics and brakes every 6 hours; location (opt-in) every
+15 minutes. When the budget is spent it stops and says so in the UI.
 It backs off on errors and never retries in a tight loop.
 
 ## 7. Privacy and security
@@ -139,12 +157,12 @@ It backs off on errors and never retries in a tight loop.
 
 ## 8. Phases
 
-1. Auth and collector, raw storage, current-state view.
-2. History charts for battery and range.
-3. Charging-session detection.
-4. Trip detection and efficiency.
-5. Location (opt-in).
-6. Packaging, documentation, first release.
+1. Auth and collector, raw storage, current-state view. **Done (0.1.0).**
+2. History charts for battery and range. Not started.
+3. Charging-session detection. Not started.
+4. Trip detection and efficiency. Not started.
+5. Location (opt-in): the collector can store it; no view yet.
+6. Packaging, documentation, first release. A first pre-release (0.1.0) exists; packaging is not done.
 
 ## 9. Design decisions
 
