@@ -246,6 +246,54 @@ class TokenExchange(unittest.TestCase):
         self.assertNotIn("test-data", text)
 
 
+class PostFormRetry(unittest.TestCase):
+    """Only a failed name lookup is retried: nothing was sent, so no token can be spent twice."""
+
+    class _Reply:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self, n):
+            return b'{"ok": true}'
+
+    def _call(self, effects):
+        import urllib.error
+        with mock.patch("evdash.auth.urllib.request.urlopen", side_effect=effects) as urlopen, \
+                mock.patch("evdash.auth.time.sleep"):
+            try:
+                return auth.post_form("https://idp.example.test/token", {"a": "b"}, {}), urlopen.call_count
+            except auth.AuthError as err:
+                return err, urlopen.call_count
+
+    def test_lookup_failures_are_retried_then_succeed(self):
+        import socket
+        import urllib.error
+        lookup = urllib.error.URLError(socket.gaierror(-3, "Temporary failure in name resolution"))
+        result, calls = self._call([lookup, lookup, self._Reply()])
+        self.assertEqual(result, (200, {"ok": True}))
+        self.assertEqual(calls, 3)
+
+    def test_lookup_failure_every_time_gives_up_after_the_limit(self):
+        import socket
+        import urllib.error
+        lookup = urllib.error.URLError(socket.gaierror(-3, "Temporary failure in name resolution"))
+        result, calls = self._call([lookup] * auth.DNS_ATTEMPTS)
+        self.assertIsInstance(result, auth.AuthError)
+        self.assertEqual(calls, auth.DNS_ATTEMPTS)
+
+    def test_a_failure_after_connecting_is_never_retried(self):
+        import urllib.error
+        for reason in (TimeoutError("timed out"), ConnectionResetError("reset")):
+            result, calls = self._call([urllib.error.URLError(reason), self._Reply()])
+            self.assertIsInstance(result, auth.AuthError)
+            self.assertEqual(calls, 1, reason)
+
+
 class TokenFile(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()

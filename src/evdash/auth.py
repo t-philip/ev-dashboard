@@ -13,6 +13,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import tempfile
 import threading
 import time
@@ -32,6 +33,8 @@ except ImportError:  # pragma: no cover
 REFRESH_MARGIN = 60
 # A sign-in link is valid for this many seconds.
 PENDING_TTL = 600
+DNS_ATTEMPTS = 3  # tries for a failed name lookup (a lossy resolver should not fail a sign-in)
+DNS_RETRY_PAUSE = 1.0
 
 PostFn = Callable[[str, Dict[str, str], Dict[str, str]], Tuple[int, dict]]
 
@@ -130,13 +133,25 @@ def post_form(url: str, data: Dict[str, str], headers: Dict[str, str],
         url, data=body, method="POST",
         headers={"Content-Type": "application/x-www-form-urlencoded",
                  "Accept": "application/json", **headers})
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            status, raw = response.status, response.read(1 << 20)
-    except urllib.error.HTTPError as err:
-        status, raw = err.code, err.read(1 << 20)
-    except (urllib.error.URLError, OSError):
-        raise AuthError("token endpoint unreachable") from None
+    attempts = max(1, DNS_ATTEMPTS)
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                status, raw = response.status, response.read(1 << 20)
+            break
+        except urllib.error.HTTPError as err:
+            status, raw = err.code, err.read(1 << 20)
+            break
+        except (urllib.error.URLError, OSError) as err:
+            # Only a failed name lookup is retried: the request has not left this host, so
+            # repeating it cannot spend a rotating refresh token twice. (A redirect to another
+            # host that then fails to resolve is the one theoretical exception; the token
+            # endpoint does not redirect.) Any later failure is not retried.
+            lookup_failed = isinstance(getattr(err, "reason", err), socket.gaierror)
+            if lookup_failed and attempt < attempts:
+                time.sleep(DNS_RETRY_PAUSE)
+                continue
+            raise AuthError("token endpoint unreachable") from None
     try:
         payload = json.loads(raw)
     except ValueError:
