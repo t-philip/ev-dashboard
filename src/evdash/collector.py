@@ -176,6 +176,18 @@ class Collector:
                 self._sleep(MIN_GAP)
         return summary
 
+    def _refresh_age(self) -> Optional[float]:
+        """Seconds since the saved sign-in was last written (every successful refresh rewrites it),
+        or None when that is not known. A number only."""
+        status = getattr(self._manager, "status", None)
+        try:
+            saved_at = status().get("saved_at") if status is not None else None
+        except Exception:  # an unreadable sign-in has no age
+            return None
+        if isinstance(saved_at, (int, float)) and not isinstance(saved_at, bool):
+            return max(0.0, self._clock() - saved_at)
+        return None
+
     def _note_auth(self, state: str, err: Optional[auth.AuthError] = None) -> None:
         """Remember what the server last said about the sign-in, so the home page, the status
         command and the monitoring can report it. Written only when it changes; ``since`` is the
@@ -205,7 +217,7 @@ class Collector:
         self._store.add_auth_event(
             record["since"], state, previous,
             (record["since"] - began) if isinstance(began, (int, float)) else None,
-            record.get("http_status"), record.get("error"))
+            record.get("http_status"), record.get("error"), self._refresh_age())
 
     def run_forever(self, stop: threading.Event) -> None:
         while not stop.is_set():

@@ -89,8 +89,11 @@ def history(db_path) -> int:
         after = ""
         if event["previous_state"]:
             after = f"  after {auth.format_duration(event['previous_for_s'])} {event['previous_state']}"
+        gap = event.get("since_last_refresh_s")
+        renewed = (f"  (sign-in last renewed {auth.format_duration(gap)} before)"
+                   if gap is not None and event["state"] != "ok" else "")
         print(f"{auth.format_utc(event['at'])}  {event['state']:<11}"
-              f"{(' ' + ', '.join(detail)) if detail else ''}{after}")
+              f"{(' ' + ', '.join(detail)) if detail else ''}{after}{renewed}")
     return 0
 
 

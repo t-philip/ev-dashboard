@@ -455,7 +455,7 @@ class Diagnostics(unittest.TestCase):
 
     def test_durations_read_naturally(self):
         self.assertEqual(auth.format_duration(5), "5 s")
-        self.assertEqual(auth.format_duration(14 * 60), "14 min")
+        self.assertEqual(auth.format_duration(12 * 60), "12 min")
         self.assertEqual(auth.format_duration(100000), "27.8 h")
         self.assertEqual(auth.format_duration(400000), "4.6 days")
         self.assertEqual(auth.format_duration(None), "an unknown time")

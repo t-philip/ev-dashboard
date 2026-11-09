@@ -477,7 +477,7 @@ def format_utc(epoch) -> str:
 
 
 def format_duration(seconds) -> str:
-    """'45 s', '14 min', '3.2 h' or '4.1 days': short and honest about being rounded."""
+    """'45 s', '12 min', '3.2 h' or '4.1 days': short and honest about being rounded."""
     try:
         s = float(seconds)
     except (TypeError, ValueError):

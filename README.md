@@ -47,7 +47,7 @@ CI yet. Run the application from the repository root with `PYTHONPATH=src python
 | `poll` | One polling pass; prints counts only |
 | `probe [PATH...]` | Requests endpoints once and prints each reply's shape (field names, types and short status words, never values) |
 | `status` | The state of the sign-in: none on file, not yet checked, accepted by the manufacturer, refused (with the HTTP status and error word the server sent) or the token service unreachable; and which scopes were granted |
-| `history` | Every recorded change of the sign-in state (accepted, refused, unreachable, none on file) with the time, the HTTP status or reason, and how long the previous state had lasted, so patterns can be read back |
+| `history` | Every recorded change of the sign-in state (accepted, refused, unreachable, none on file) with the time, the HTTP status or reason, how long the previous state had lasted, and how long before it the sign-in had last been renewed, so patterns can be read back |
 | `refresh` | Refreshes the stored sign-in if it is due |
 
 Run `serve` and `collect` as two services sharing one database. Settings are environment variables:

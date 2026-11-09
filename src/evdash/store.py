@@ -48,6 +48,11 @@ CREATE TABLE IF NOT EXISTS auth_events (
 );
 """
 
+# Columns added after the first release of a table: applied to databases created earlier.
+MIGRATIONS = (
+    ("auth_events", "since_last_refresh_s", "REAL"),  # age of the saved sign-in when the state began
+)
+
 
 class GroupState(NamedTuple):
     next_due: float
@@ -76,6 +81,10 @@ class Store:
             self._db.execute("PRAGMA journal_mode=WAL")
             self._db.execute("PRAGMA synchronous=NORMAL")
             self._db.executescript(SCHEMA)
+            for table, column, kind in MIGRATIONS:
+                have = {row[1] for row in self._db.execute(f"PRAGMA table_info({table})")}
+                if column not in have:
+                    self._db.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
             self._db.commit()
 
     def close(self) -> None:
@@ -138,19 +147,24 @@ class Store:
 
     def add_auth_event(self, at: float, state: str, previous_state: Optional[str],
                        previous_for_s: Optional[float], http_status: Optional[int],
-                       error: Optional[str]) -> None:
-        """One row each time the sign-in state changes: the history that shows patterns."""
+                       error: Optional[str], since_last_refresh_s: Optional[float] = None) -> None:
+        """One row each time the sign-in state changes: the history that shows patterns.
+
+        ``since_last_refresh_s`` is how long ago the saved sign-in was last successfully renewed
+        when the state began, or None when that is not known."""
         self._db.execute(
-            "INSERT INTO auth_events (at, state, previous_state, previous_for_s, http_status, error) "
-            "VALUES (?, ?, ?, ?, ?, ?)", (at, state, previous_state, previous_for_s, http_status, error))
+            "INSERT INTO auth_events (at, state, previous_state, previous_for_s, http_status, error, "
+            "since_last_refresh_s) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (at, state, previous_state, previous_for_s, http_status, error, since_last_refresh_s))
         self._db.commit()
 
     def auth_events(self, limit: int = 50) -> List[dict]:
         """The newest ``limit`` events, oldest first."""
         rows = self._db.execute(
-            "SELECT at, state, previous_state, previous_for_s, http_status, error "
+            "SELECT at, state, previous_state, previous_for_s, http_status, error, since_last_refresh_s "
             "FROM auth_events ORDER BY id DESC LIMIT ?", (max(1, int(limit)),)).fetchall()
-        keys = ("at", "state", "previous_state", "previous_for_s", "http_status", "error")
+        keys = ("at", "state", "previous_state", "previous_for_s", "http_status", "error",
+                "since_last_refresh_s")
         return [dict(zip(keys, row)) for row in reversed(rows)]
 
     def fingerprint(self) -> Tuple[int, int]:

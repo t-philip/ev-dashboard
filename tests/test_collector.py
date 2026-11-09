@@ -414,7 +414,7 @@ class CollectorBehaviour(unittest.TestCase):
         refused = auth.TokenInvalid("m", http_status=400, error_code="invalid_grant")
         with self.assertLogs("evdash.collector", level="WARNING") as logs:
             self.make(FakeApi(), manager=FakeManager(down)).run_once()
-            self.clock.now += 840
+            self.clock.now += 600
             self.make(FakeApi(), manager=FakeManager(refused)).run_once()
         self.assertIn("reason=timeout", "\n".join(logs.output))
         self.clock.now += 300
@@ -424,8 +424,39 @@ class CollectorBehaviour(unittest.TestCase):
         self.assertEqual([e["previous_state"] for e in events], [None, "unreachable", "rejected"])
         self.assertEqual(events[0]["error"], "timeout")
         self.assertEqual((events[1]["http_status"], events[1]["error"]), (400, "invalid_grant"))
-        self.assertEqual(events[1]["previous_for_s"], 840)  # how long the unreachable state lasted
+        self.assertEqual(events[1]["previous_for_s"], 600)  # how long the unreachable state lasted
         self.assertEqual(events[2]["previous_for_s"], 300)
+
+    def test_a_refusal_records_how_long_since_the_sign_in_was_last_renewed(self):
+        class Aged(FakeManager):
+            def status(self):
+                return {"signed_in": True, "granted_scopes": [], "saved_at": T0 - 1000}
+        refused = auth.TokenInvalid("m", http_status=400, error_code="invalid_grant")
+        with self.assertLogs("evdash.collector", level="WARNING"):
+            self.make(FakeApi(), manager=Aged(refused)).run_once()
+        self.assertEqual(self.db.auth_events()[0]["since_last_refresh_s"], 1000)
+
+    def test_an_unknown_refresh_age_is_stored_as_unknown(self):
+        refused = auth.TokenInvalid("m", http_status=400, error_code="invalid_grant")
+        with self.assertLogs("evdash.collector", level="WARNING"):
+            self.make(FakeApi(), manager=FakeManager(refused)).run_once()  # its status has no age
+        self.assertIsNone(self.db.auth_events()[0]["since_last_refresh_s"])
+
+    def test_a_database_made_before_the_age_column_is_upgraded(self):
+        path = Path(self.tmp.name) / "old.db"
+        raw = sqlite3.connect(path)
+        raw.execute("CREATE TABLE auth_events (id INTEGER PRIMARY KEY AUTOINCREMENT, at REAL NOT NULL, "
+                    "state TEXT NOT NULL, previous_state TEXT, previous_for_s REAL, http_status INTEGER, "
+                    "error TEXT)")
+        raw.execute("INSERT INTO auth_events (at, state) VALUES (1.0, 'ok')")
+        raw.commit()
+        raw.close()
+        upgraded = store.Store(path)
+        self.addCleanup(upgraded.close)
+        upgraded.add_auth_event(2.0, "rejected", "ok", 1.0, 400, "invalid_grant", 600.0)
+        events = upgraded.auth_events()
+        self.assertEqual([e["since_last_refresh_s"] for e in events], [None, 600.0])
+        store.Store(path).close()  # opening again is harmless: the column is not added twice
 
     def test_an_unchanged_state_adds_no_history_rows(self):
         refused = auth.TokenInvalid("m", http_status=400, error_code="invalid_grant")
@@ -440,15 +471,16 @@ class CollectorBehaviour(unittest.TestCase):
         import contextlib
         import io
         self.db.add_auth_event(T0, "unreachable", None, None, None, "timeout")
-        self.db.add_auth_event(T0 + 840, "rejected", "unreachable", 840, 400, "invalid_grant")
+        self.db.add_auth_event(T0 + 600, "rejected", "unreachable", 600, 400, "invalid_grant", 1000)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             self.assertEqual(cli.history(self.db.path), 0)
         text = out.getvalue()
         self.assertIn("rejected", text)
         self.assertIn("HTTP 400, invalid_grant", text)
-        self.assertIn("after 14 min unreachable", text)
-        self.assertIn("1999-03-04 05:20:00 UTC", text)
+        self.assertIn("after 10 min unreachable", text)
+        self.assertIn("sign-in last renewed 17 min before", text)
+        self.assertIn("1999-03-04 05:16:00 UTC", text)
 
     def test_history_command_without_a_database_says_so(self):
         import contextlib
