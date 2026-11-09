@@ -212,6 +212,18 @@ class TokenExchange(unittest.TestCase):
             self.manager(FakeIdP([(400, {"error": "invalid_grant"})])).access_token()
         self.assertEqual(self.store.path.read_text(), before)
 
+    def test_a_refused_refresh_carries_the_status_and_error_word(self):
+        self.store.save({"access_token": "test-data-a1", "refresh_token": "test-data-r1",
+                         "expires_at": 0})
+        with self.assertRaises(auth.TokenInvalid) as ctx:
+            self.manager(FakeIdP([(400, {"error": "invalid_grant"})])).access_token()
+        self.assertEqual((ctx.exception.http_status, ctx.exception.error_code), (400, "invalid_grant"))
+
+    def test_status_reports_when_the_token_file_was_saved(self):
+        self.store.save({"access_token": "test-data-a1", "refresh_token": "test-data-r1",
+                         "expires_at": 9999999999})
+        self.assertGreater(self.manager(FakeIdP([])).status()["saved_at"], 0)
+
     def test_refresh_command_rotates_and_prints_no_token(self):
         from evdash import __main__ as cli
         self.store.save({"access_token": "test-data-a1", "refresh_token": "test-data-r1",
@@ -367,6 +379,57 @@ class RealHttpExchange(unittest.TestCase):
     def test_unreachable_endpoint_is_an_auth_error(self):
         with self.assertRaises(auth.AuthError):
             auth.post_form("http://127.0.0.1:1/token", {}, {}, timeout=2)
+
+    def test_unreachable_is_told_apart_from_a_refusal(self):
+        # Nothing was decided about the sign-in: callers must be able to tell this from a refusal.
+        with self.assertRaises(auth.EndpointUnreachable) as ctx:
+            auth.post_form("http://127.0.0.1:1/token", {}, {}, timeout=2)
+        self.assertNotIsInstance(ctx.exception, auth.TokenInvalid)
+
+
+
+class Describe(unittest.TestCase):
+    """What is true about the sign-in, in words: a parked car is never one of the states."""
+
+    ON_DISK = {"signed_in": True, "granted_scopes": [], "saved_at": 100.0}
+
+    def kind(self, info, record):
+        return auth.describe(info, record)[0]
+
+    def test_nothing_on_disk_means_no_sign_in(self):
+        self.assertEqual(self.kind({"signed_in": False}, None), "no_sign_in")
+
+    def test_unreadable_file(self):
+        self.assertEqual(self.kind(None, None), "unreadable")
+
+    def test_a_file_the_collector_has_not_checked_is_not_called_accepted(self):
+        self.assertEqual(self.kind(self.ON_DISK, None), "unverified")
+
+    def test_accepted(self):
+        self.assertEqual(self.kind(self.ON_DISK, {"state": "ok", "since": 50.0}), "ok")
+
+    def test_refused_says_when_why_and_that_parking_is_not_the_cause(self):
+        record = {"state": "rejected", "since": 200.0, "http_status": 400, "error": "invalid_grant"}
+        kind, text = auth.describe(self.ON_DISK, record)
+        self.assertEqual(kind, "rejected")
+        self.assertIn("HTTP 400", text)
+        self.assertIn("invalid_grant", text)
+        self.assertIn("1970-01-01 00:03 UTC", text)
+        self.assertIn("not caused by the car being parked", text)
+
+    def test_unreachable_is_not_called_a_refusal(self):
+        kind, text = auth.describe(self.ON_DISK, {"state": "unreachable", "since": 200.0})
+        self.assertEqual(kind, "unreachable")
+        self.assertIn("has not been judged", text)
+
+    def test_a_sign_in_saved_after_the_refusal_is_waiting_for_a_check(self):
+        record = {"state": "rejected", "since": 200.0, "http_status": 400, "error": "invalid_grant"}
+        newer = dict(self.ON_DISK, saved_at=300.0)
+        self.assertEqual(self.kind(newer, record), "unverified")
+
+    def test_a_garbled_record_does_not_break_the_description(self):
+        self.assertEqual(self.kind(self.ON_DISK, {"state": "ok", "since": "x"}), "ok")
+        self.assertEqual(self.kind(self.ON_DISK, {"state": "rejected", "since": "x"}), "rejected")
 
 
 if __name__ == "__main__":

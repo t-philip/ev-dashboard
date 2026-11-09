@@ -1,5 +1,6 @@
 import http.client
 import io
+import json
 import logging
 import tempfile
 import threading
@@ -7,7 +8,7 @@ import unittest
 import urllib.parse
 from pathlib import Path
 
-from evdash import auth, config, redact
+from evdash import auth, config, redact, store
 from evdash.server import App, make_server
 
 from test_auth import CID, REDIRECT, SECRET, FakeIdP, make_cfg
@@ -107,14 +108,17 @@ class Config(unittest.TestCase):
 class Live(unittest.TestCase):
     """The real request handler on a loopback port, with a scripted identity provider."""
 
-    def start(self, replies):
+    def start(self, replies, with_db=False):
         self.dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.dir.cleanup)
         self.idp = FakeIdP(replies)
         self.store = auth.TokenStore(Path(self.dir.name) / "tokens.json")
         manager = auth.TokenManager(make_cfg(), self.store, post=self.idp)
         self.pending = auth.PendingSignIns()
-        self.server = make_server(App(make_cfg(), manager, self.pending), "127.0.0.1", 0)
+        self.db_path = Path(self.dir.name) / "evdash.db"
+        self.server = make_server(
+            App(make_cfg(), manager, self.pending, self.db_path if with_db else None),
+            "127.0.0.1", 0)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
         self.addCleanup(self.server.server_close)
         self.addCleanup(self.server.shutdown)
@@ -254,10 +258,43 @@ class Live(unittest.TestCase):
         conn.request("GET", "/")
         text = conn.getresponse().read().decode()
         conn.close()
-        self.assertIn("signed in.", text.lower())
+        # No collector has checked this file yet, so the page must not claim Volvo accepts it.
+        self.assertIn("sign-in not yet checked", text.lower())
+        self.assertNotIn("signed in.", text.lower())
         self.assertIn("scope:one", text)
         self.assertIn("&lt;b&gt;", text)          # stored text is escaped, never rendered
         self.assertNotIn("<b>x", text)
+        for secret in (ACCESS, REFRESH):
+            self.assertNotIn(secret, text)
+
+    def _home_with_record(self, record):
+        db = store.Store(self.db_path)  # what the collector would have written
+        db.set_meta("auth_state", json.dumps(record))
+        db.close()
+        self.store.save({"access_token": ACCESS, "refresh_token": REFRESH,
+                         "expires_at": 9e12, "scope": "openid"})
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        conn.request("GET", "/")
+        text = conn.getresponse().read().decode()
+        conn.close()
+        return text
+
+    def test_home_page_says_so_when_volvo_accepts_the_sign_in(self):
+        self.start([], with_db=True)
+        text = self._home_with_record({"state": "ok", "since": 1.0})
+        self.assertIn("signed in.", text.lower())
+        self.assertIn("accepting the saved sign-in", text)
+
+    def test_home_page_says_so_when_volvo_refused_the_sign_in(self):
+        self.start([], with_db=True)
+        # "since" lies after the token file's save time, so the refusal is the current state.
+        text = self._home_with_record({"state": "rejected", "since": 1e12, "http_status": 400,
+                                       "error": "invalid_grant"})
+        lowered = text.lower()
+        self.assertIn("sign-in refused by volvo", lowered)
+        self.assertIn("invalid_grant", text)
+        self.assertIn("not caused by the car being parked", text)
+        self.assertNotIn("granted access", lowered)  # no scope list for a refused sign-in
         for secret in (ACCESS, REFRESH):
             self.assertNotIn(secret, text)
 

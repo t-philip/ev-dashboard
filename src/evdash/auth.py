@@ -41,7 +41,17 @@ PostFn = Callable[[str, Dict[str, str], Dict[str, str]], Tuple[int, dict]]
 
 
 class AuthError(Exception):
-    """A sign-in or token problem. The message never contains a secret."""
+    """A sign-in or token problem. The message never contains a secret.
+
+    ``http_status`` and ``error_code`` carry what the server answered (the status number and
+    its short ``error`` word), so a log line can say *why* without ever holding a body.
+    """
+
+    def __init__(self, message: str = "", *, http_status: Optional[int] = None,
+                 error_code: Optional[str] = None):
+        super().__init__(message)
+        self.http_status = http_status
+        self.error_code = error_code
 
 
 class NotSignedIn(AuthError):
@@ -50,6 +60,14 @@ class NotSignedIn(AuthError):
 
 class TokenInvalid(AuthError):
     """The server refused the refresh token: the owner has to sign in again."""
+
+
+class EndpointUnreachable(AuthError):
+    """The token endpoint could not be reached (network or server down).
+
+    Nothing was decided about the sign-in: it is neither accepted nor refused, so the right
+    response is to retry, not to ask the owner to sign in.
+    """
 
 
 @dataclass(frozen=True)
@@ -162,8 +180,8 @@ def fetch(request: urllib.request.Request, timeout: float = 15.0,
             if lookup_failed and attempt < attempts:
                 time.sleep(DNS_RETRY_PAUSE)
                 continue
-            raise AuthError(f"{what} unreachable") from None
-    raise AuthError(f"{what} unreachable")  # unreachable: the loop always returns or raises
+            raise EndpointUnreachable(f"{what} unreachable") from None
+    raise EndpointUnreachable(f"{what} unreachable")  # never reached: the loop returns or raises
 
 
 def post_form(url: str, data: Dict[str, str], headers: Dict[str, str],
@@ -205,8 +223,8 @@ def _token_request(cfg: OAuthConfig, form: Dict[str, str], post: PostFn,
         error = _error_code(payload)
         message = f"token endpoint refused the request (HTTP {status}, error={error})"
         if form.get("grant_type") == "refresh_token" and error == "invalid_grant":
-            raise TokenInvalid(message)
-        raise AuthError(message)
+            raise TokenInvalid(message, http_status=status, error_code=error)
+        raise AuthError(message, http_status=status, error_code=error)
     access = payload.get("access_token")
     if not isinstance(access, str) or not access:
         raise AuthError("token endpoint reply had no access token")
@@ -376,5 +394,57 @@ class TokenManager:
             return {"signed_in": False}
         scope = tokens.get("scope")
         granted = sorted(scope.split()) if isinstance(scope, str) else None
-        return {"signed_in": True, "granted_scopes": granted,
+        try:
+            saved_at = self._store.path.stat().st_mtime
+        except OSError:
+            saved_at = None
+        # "signed_in" here means only that a token file is on disk. Whether the server still
+        # accepts it is a separate fact, recorded by the collector and read by ``describe``.
+        return {"signed_in": True, "granted_scopes": granted, "saved_at": saved_at,
                 "access_token_valid_for": max(0, int(tokens.get("expires_at", 0) - self._clock()))}
+
+
+def _stamp(epoch) -> str:
+    try:
+        return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(float(epoch)))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "an unknown time"
+
+
+def describe(info: Optional[dict], record: Optional[dict]) -> Tuple[str, str]:
+    """(state, sentence) saying what is actually true about the sign-in.
+
+    ``info`` is ``TokenManager.status()`` (what is on disk, None when unreadable); ``record`` is
+    what the collector last learned from the server (None before its first check). A parked car
+    is not a state: collection only stops when the sign-in is missing, refused, or unreachable.
+    """
+    if info is None:
+        return "unreadable", "The stored sign-in could not be read."
+    if not info.get("signed_in"):
+        return "no_sign_in", "No sign-in is on file, so nothing is being collected. Sign in to start."
+    state = record.get("state") if isinstance(record, dict) else None
+    since = record.get("since") if isinstance(record, dict) else None
+    saved_at = info.get("saved_at")
+    # A new sign-in written after the recorded problem has not been checked yet.
+    newer = isinstance(saved_at, (int, float)) and isinstance(since, (int, float)) and saved_at > since
+    if state == "ok":
+        return "ok", "Signed in: Volvo is accepting the saved sign-in."
+    if state in ("rejected", "no_sign_in", "unreachable") and not newer:
+        if state == "rejected":
+            detail = []
+            if record.get("http_status"):
+                detail.append(f"HTTP {record['http_status']}")
+            if record.get("error"):
+                detail.append(f"error {record['error']}")
+            suffix = f" ({', '.join(detail)})" if detail else ""
+            return "rejected", (f"Volvo rejected the saved sign-in at {_stamp(since)}{suffix}. "
+                                "Collection is stopped until you sign in again. This is not "
+                                "caused by the car being parked: the collector keeps the "
+                                "sign-in alive by refreshing it every few minutes.")
+        if state == "unreachable":
+            return "unreachable", (f"Volvo's token service could not be reached since "
+                                   f"{_stamp(since)}. The collector keeps retrying; the saved "
+                                   "sign-in has not been judged either way.")
+        return "no_sign_in", "No sign-in is on file, so nothing is being collected. Sign in to start."
+    return "unverified", ("A sign-in is on file; the collector has not yet checked it with "
+                          "Volvo, so it is not known whether Volvo still accepts it.")

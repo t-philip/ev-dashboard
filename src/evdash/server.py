@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
 
-from . import auth, tripviews, view
+from . import auth, store, tripviews, view
 
 log = logging.getLogger("evdash.server")
 
@@ -101,17 +101,18 @@ class _Handler(BaseHTTPRequestHandler):
             info = self.app.manager.status()
         except auth.AuthError:
             info = None
-        if info is None:
-            state = "<p><strong>The stored sign-in could not be read.</strong> Sign in again.</p>"
-        elif info["signed_in"]:
+        # What is on disk is one fact; whether Volvo still accepts it is another, and only the
+        # collector knows that. Say which, instead of calling a refused sign-in "signed in".
+        kind, sentence = auth.describe(info, store.read_auth_record(self.app.db_path))
+        headline = {"ok": "Signed in.", "rejected": "Sign-in refused by Volvo.",
+                    "unreachable": "Volvo could not be reached.", "unverified": "Sign-in not yet checked.",
+                    "no_sign_in": "Not signed in.", "unreadable": "Sign-in unreadable."}[kind]
+        state = f"<p><strong>{html.escape(headline)}</strong> {html.escape(sentence)}</p>"
+        if info is not None and info["signed_in"] and kind in ("ok", "unverified", "unreachable"):
             scopes = info.get("granted_scopes") or []
             listing = ("<ul>" + "".join(f"<li><code>{html.escape(s)}</code></li>" for s in scopes)
                        + "</ul>") if scopes else "<p>The server did not report the granted scopes.</p>"
-            state = ("<p><strong>Signed in.</strong> Access tokens refresh automatically; "
-                     "you only sign in again if the grant lapses.</p>"
-                     f"<h2>Granted access ({len(scopes)})</h2>{listing}")
-        else:
-            state = "<p><strong>Not signed in.</strong></p>"
+            state += (f"<h2>Granted access ({len(scopes)})</h2>{listing}")
         body = (
             "<!doctype html><html lang=en><meta charset=utf-8>"
             "<meta name=viewport content='width=device-width, initial-scale=1'>"

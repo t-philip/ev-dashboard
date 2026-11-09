@@ -82,7 +82,8 @@ def main(argv=None) -> int:
 
     if command == "status":
         info = manager.status()  # facts only, never a token value
-        print("signed in" if info["signed_in"] else "not signed in")
+        kind, sentence = auth.describe(info, store.read_auth_record(settings.db_path))
+        print(f"{kind}: {sentence}")
         if info.get("granted_scopes"):
             print("granted scopes:", " ".join(info["granted_scopes"]))
         elif info["signed_in"]:

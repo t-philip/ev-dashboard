@@ -113,6 +113,16 @@ manufacturer APIs  <-HTTPS-  collector  ->  SQLite  <-  web UI (read-only views)
   for 7 days, and the grant ends after 6 months, when the owner must sign in again. Tokens are
   stored in a file outside the web root with owner-only permissions, are never logged or printed,
   and are written atomically so a crash cannot lose the rotated refresh token.
+- **Reporting the sign-in:** a token file on disk only proves a sign-in was once saved; whether the
+  manufacturer still accepts it is a separate fact. The collector records the last answer (accepted,
+  refused with the HTTP status and error word, token service unreachable, or no sign-in on file) in the
+  database, and the home page, `status` and the log report that state and when it began. An
+  unreachable token service is deliberately not reported as a refusal: nothing was decided, so the
+  collector retries. A parked vehicle is not a state: the sign-in is kept alive by the collector's
+  regular refreshes, so collection stops only on a missing or refused sign-in. A refused sign-in
+  cannot be revived by polling (the refresh token is single-use), and the cases that cause one, such
+  as a refresh reply lost in transit, cannot be prevented client-side; the design therefore
+  makes them visible and quick to recover from instead.
 - **Callback handling:** the authorisation code is in the callback URL, so the callback never
   renders a page. It exchanges the code and answers with a redirect to a result page that has no
   query string. The server's own access-log and error lines never include a query string, and a

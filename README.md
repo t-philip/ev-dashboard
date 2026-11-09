@@ -46,7 +46,7 @@ CI yet. Run the application from the repository root with `PYTHONPATH=src python
 | `collect` | Polls the APIs on a schedule and stores readings in SQLite, until stopped |
 | `poll` | One polling pass; prints counts only |
 | `probe [PATH...]` | Requests endpoints once and prints each reply's shape (field names, types and short status words, never values) |
-| `status` | Whether you are signed in and which scopes were granted |
+| `status` | The state of the sign-in: none on file, not yet checked, accepted by the manufacturer, refused (with the HTTP status and error word the server sent) or the token service unreachable; and which scopes were granted |
 | `refresh` | Refreshes the stored sign-in if it is due |
 
 Run `serve` and `collect` as two services sharing one database. Settings are environment variables:
@@ -109,6 +109,12 @@ network-boundary rule applies, and it matters more here.
    sign-in stays alive only while it is used: according to the manufacturer's documentation a refresh
    token unused for seven days becomes invalid. The collector refreshes the access token whenever it
    is due; if you stop it for longer than that, run `refresh` within the window or sign in again.
+   A parked car never stops collection: while the collector runs it refreshes the sign-in every few
+   minutes, whether or not the vehicle is used. Collection stops only when no sign-in is on file or
+   the manufacturer refuses the saved one, for example when a refresh reply is lost in transit and the
+   rotated token never reaches you. `status`, the home page and the log then say so, with the HTTP
+   status and error word the server sent, and you sign in again. A token service that cannot be
+   reached is reported separately and retried: it says nothing about whether the sign-in is good.
 
 The data is the manufacturer's to withdraw: it may change or end access at any time. The licence is
 AGPL-3.0, whose network clause applies if you offer a modified version to others. Release notes are

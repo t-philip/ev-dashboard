@@ -6,6 +6,7 @@ Deleting the database file deletes everything the application has stored.
 """
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from typing import Iterable, List, NamedTuple, Optional, Tuple
@@ -117,6 +118,15 @@ class Store:
         row = self._db.execute("SELECT value FROM meta WHERE key = 'compact_pending'").fetchone()
         return bool(row and row[0] == "1")
 
+    def get_meta(self, key: str) -> Optional[str]:
+        """A small piece of bookkeeping (never a secret), or None."""
+        row = self._db.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self._db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
+        self._db.commit()
+
     def fingerprint(self) -> Tuple[int, int]:
         """(highest row id, row count): changes whenever readings are added or deleted."""
         row = self._db.execute("SELECT COALESCE(MAX(id), 0), COUNT(*) FROM readings").fetchone()
@@ -182,3 +192,25 @@ class Store:
             "ON CONFLICT (day) DO UPDATE SET calls = calls + 1 WHERE calls < ?", (day, budget))
         self._db.commit()
         return cursor.rowcount == 1
+
+
+def read_auth_record(path) -> Optional[dict]:
+    """What the collector last learned about the sign-in (see ``Collector._note_auth``), or None.
+
+    Opens the database read-only and never raises: a missing or unreadable file, or a record that
+    is not what was written, simply means "not known yet".
+    """
+    if path is None:
+        return None
+    try:
+        db = Store(path, readonly=True)
+    except (sqlite3.Error, OSError):
+        return None
+    try:
+        raw = db.get_meta("auth_state")
+        record = json.loads(raw) if raw else None
+    except (sqlite3.Error, ValueError):
+        return None
+    finally:
+        db.close()
+    return record if isinstance(record, dict) else None

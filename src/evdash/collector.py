@@ -132,14 +132,33 @@ class Collector:
         self._prune()  # retention applies whether or not location is still being collected
         try:
             self._manager.access_token()
-        except (auth.NotSignedIn, auth.TokenInvalid):
-            log.warning("not signed in: sign in again from the dashboard's login link")
+        except auth.NotSignedIn:
+            log.warning("no sign-in on file: sign in from the dashboard's login link")
+            self._note_auth("no_sign_in")
             summary["signed_in"] = False
+            return summary
+        except auth.TokenInvalid as err:
+            # Volvo answered, and said the saved refresh token no longer works. Only a new
+            # sign-in fixes this; it is not about how long the car has been parked.
+            log.warning("Volvo rejected the saved sign-in (HTTP %s, error=%s): collection is "
+                        "stopped until you sign in again from the dashboard's login link",
+                        err.http_status or "?", err.error_code or "unspecified")
+            self._note_auth("rejected", err)
+            summary["signed_in"] = False
+            return summary
+        except auth.EndpointUnreachable as err:
+            # Nothing was decided: the sign-in may be perfectly good. Retry, do not alarm.
+            log.warning("could not reach Volvo's token service (%s): retrying; the saved "
+                        "sign-in has not been judged", err)
+            self._note_auth("unreachable", err)
+            summary["failed"] += 1
             return summary
         except auth.AuthError as err:
             log.warning("could not check the sign-in: %s", err)
+            self._note_auth("error", err)
             summary["failed"] += 1
             return summary
+        self._note_auth("ok")
 
         for vin in self._vehicles(summary):
             for group in self._groups:
@@ -156,6 +175,29 @@ class Collector:
                 self._poll(vin, group, summary)
                 self._sleep(MIN_GAP)
         return summary
+
+    def _note_auth(self, state: str, err: Optional[auth.AuthError] = None) -> None:
+        """Remember what the server last said about the sign-in, so the home page, the status
+        command and the monitoring can report it. Written only when it changes; ``since`` is the
+        moment the current state began. Facts only: never a token."""
+        record: Dict[str, object] = {"state": state, "since": self._clock()}
+        if err is not None:
+            if err.http_status:
+                record["http_status"] = err.http_status
+            if err.error_code:
+                record["error"] = err.error_code
+        try:
+            old = json.loads(self._store.get_meta("auth_state") or "null")
+        except ValueError:
+            old = None
+        same = (isinstance(old, dict) and old.get("state") == state
+                and old.get("http_status") == record.get("http_status")
+                and old.get("error") == record.get("error"))
+        if same:
+            return  # nothing new: keep the original start time
+        if isinstance(old, dict) and old.get("state") and old.get("state") != state:
+            log.info("sign-in state changed: %s -> %s", old.get("state"), state)
+        self._store.set_meta("auth_state", json.dumps(record))
 
     def run_forever(self, stop: threading.Event) -> None:
         while not stop.is_set():

@@ -1,5 +1,6 @@
 import calendar
 import http.client
+import json
 import logging
 import os
 import sqlite3
@@ -348,6 +349,73 @@ class CollectorBehaviour(unittest.TestCase):
         summary = self.make(api, manager=FakeManager(auth.NotSignedIn("x"))).run_once()
         self.assertFalse(summary["signed_in"])
         self.assertEqual(api.requests, [])
+
+    def auth_record(self):
+        return json.loads(self.db.get_meta("auth_state"))
+
+    def test_a_refused_sign_in_is_reported_as_refused_with_the_reason(self):
+        err = auth.TokenInvalid("m", http_status=400, error_code="invalid_grant")
+        api = FakeApi()
+        with self.assertLogs("evdash.collector", level="WARNING") as logs:
+            summary = self.make(api, manager=FakeManager(err)).run_once()
+        text = "\n".join(logs.output)
+        self.assertFalse(summary["signed_in"])
+        self.assertEqual(api.requests, [])
+        self.assertIn("Volvo rejected the saved sign-in", text)
+        self.assertIn("HTTP 400", text)
+        self.assertIn("invalid_grant", text)
+        self.assertNotIn("not signed in", text)
+        record = self.auth_record()
+        self.assertEqual((record["state"], record["http_status"], record["error"]),
+                         ("rejected", 400, "invalid_grant"))
+
+    def test_a_missing_sign_in_is_reported_as_missing(self):
+        with self.assertLogs("evdash.collector", level="WARNING") as logs:
+            summary = self.make(FakeApi(), manager=FakeManager(auth.NotSignedIn("x"))).run_once()
+        self.assertFalse(summary["signed_in"])
+        self.assertIn("no sign-in on file", "\n".join(logs.output))
+        self.assertEqual(self.auth_record()["state"], "no_sign_in")
+
+    def test_an_unreachable_token_service_is_not_called_a_refusal(self):
+        api = FakeApi()
+        err = auth.EndpointUnreachable("token endpoint unreachable")
+        with self.assertLogs("evdash.collector", level="WARNING") as logs:
+            summary = self.make(api, manager=FakeManager(err)).run_once()
+        text = "\n".join(logs.output)
+        self.assertTrue(summary["signed_in"])  # not judged, so no "sign in again" wait
+        self.assertEqual(summary["failed"], 1)
+        self.assertEqual(api.requests, [])
+        self.assertIn("has not been judged", text)
+        self.assertNotIn("rejected", text)
+        self.assertEqual(self.auth_record()["state"], "unreachable")
+
+    def test_recovery_is_recorded_and_the_start_time_is_kept_while_nothing_changes(self):
+        err = auth.TokenInvalid("m", http_status=400, error_code="invalid_grant")
+        bad = self.make(FakeApi(), manager=FakeManager(err))
+        with self.assertLogs("evdash.collector", level="WARNING"):
+            bad.run_once()
+        began = self.auth_record()["since"]
+        self.clock.now += 300
+        with self.assertLogs("evdash.collector", level="WARNING"):
+            bad.run_once()
+        self.assertEqual(self.auth_record()["since"], began)  # same state: original time kept
+        self.clock.now += 300
+        good = self.make(FakeApi(default=(200, {})))
+        with self.assertLogs("evdash.collector", level="INFO") as logs:
+            good.run_once()
+        self.assertIn("sign-in state changed: rejected -> ok", "\n".join(logs.output))
+        record = self.auth_record()
+        self.assertEqual(record["state"], "ok")
+        self.assertGreater(record["since"], began)
+        self.assertNotIn("http_status", record)
+
+    def test_the_reason_never_holds_a_token_or_secret(self):
+        err = auth.TokenInvalid("m", http_status=400, error_code="invalid_grant")
+        with self.assertLogs("evdash.collector", level="WARNING") as logs:
+            self.make(FakeApi(), manager=FakeManager(err)).run_once()
+        stored = self.db.get_meta("auth_state") + "\n".join(logs.output)
+        self.assertNotIn(TOKEN, stored)
+        self.assertNotIn(API_KEY, stored)
 
     def test_location_is_collected_only_when_enabled(self):
         point = {"data": {"geometry": {"coordinates": [10.5, 20.25]}, "properties": {"timestamp": TS}}}
