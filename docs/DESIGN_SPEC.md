@@ -109,8 +109,11 @@ manufacturer APIs  <-HTTPS-  collector  ->  SQLite  <-  web UI (read-only views)
 - **Scopes (read-only only):** the minimum for the features in section 1. No command, lock, unlock,
   engine, climate, honk/flash, navigation or wallbox-write scopes are ever requested. Location read
   is requested but the feature is off unless the user enables it.
-- **Tokens:** access tokens are short-lived; refresh tokens rotate on every use, expire if unused
-  for 7 days, and the grant ends after 6 months, when the owner must sign in again. Tokens are
+- **Tokens:** access tokens are short-lived; refresh tokens rotate on every use (the old one is
+  invalidated), have a short default lifetime that the remember-me option at the login screen lengthens, and
+  the grant ends after at most 3 months of continuous refreshing, when the owner must sign in again
+  (the manufacturer's authorisation documentation; it gives no figure for the default lifetime, so
+  the server-reported lifetime is recorded when present and shown by `status`). Tokens are
   stored in a file outside the web root with owner-only permissions, are never logged or printed,
   and are written atomically so a crash cannot lose the rotated refresh token.
 - **Reporting the sign-in:** a token file on disk only proves a sign-in was once saved; whether the
@@ -122,7 +125,11 @@ manufacturer APIs  <-HTTPS-  collector  ->  SQLite  <-  web UI (read-only views)
   regular refreshes, so collection stops only on a missing or refused sign-in. A refused sign-in
   cannot be revived by polling (the refresh token is single-use), and the cases that cause one, such
   as a refresh reply lost in transit, cannot be prevented client-side; the design therefore
-  makes them visible and quick to recover from instead.
+  makes them visible and quick to recover from instead. Every change of state is also kept as a row
+  (when it began, the HTTP status or a fixed reason word such as `dns`, `timeout`, `refused`, `reset`
+  or `tls`, and how long the previous state had lasted) and listed by `history`: a failed name lookup
+  means the request never left the host, whereas a timeout or reset may mean the server processed it
+  and the reply was lost, so the reason word is what separates a harmless gap from a lost token.
 - **Callback handling:** the authorisation code is in the callback URL, so the callback never
   renders a page. It exchanges the code and answers with a redirect to a result page that has no
   query string. The server's own access-log and error lines never include a query string, and a

@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import socket
+import ssl
 import tempfile
 import threading
 import time
@@ -176,12 +177,36 @@ def fetch(request: urllib.request.Request, timeout: float = 15.0,
         except urllib.error.HTTPError as err:
             return err.code, err.read(1 << 20), err.headers
         except (urllib.error.URLError, OSError, http.client.HTTPException) as err:
-            lookup_failed = isinstance(getattr(err, "reason", err), socket.gaierror)
+            reason = getattr(err, "reason", err)
+            lookup_failed = isinstance(reason, socket.gaierror)
             if lookup_failed and attempt < attempts:
                 time.sleep(DNS_RETRY_PAUSE)
                 continue
-            raise EndpointUnreachable(f"{what} unreachable") from None
-    raise EndpointUnreachable(f"{what} unreachable")  # never reached: the loop returns or raises
+            raise EndpointUnreachable(f"{what} unreachable",
+                                      error_code=unreachable_reason(reason)) from None
+    raise EndpointUnreachable(f"{what} unreachable", error_code="other")  # never reached
+
+
+def unreachable_reason(reason: object) -> str:
+    """A short, fixed word for why a request never got an answer (never the exception text).
+
+    The word matters for diagnosis: a failed name lookup means the request never left this host,
+    while a timeout or reset may mean the server processed it and the reply was lost.
+    """
+    if isinstance(reason, socket.gaierror):
+        return "dns"
+    if isinstance(reason, (socket.timeout, TimeoutError)):
+        return "timeout"
+    if isinstance(reason, ConnectionRefusedError):
+        return "refused"
+    if isinstance(reason, (ConnectionResetError, ConnectionAbortedError,
+                           http.client.RemoteDisconnected, http.client.IncompleteRead)):
+        return "reset"
+    if isinstance(reason, ssl.SSLError):
+        return "tls"
+    if isinstance(reason, OSError):
+        return "network"
+    return "other"
 
 
 def post_form(url: str, data: Dict[str, str], headers: Dict[str, str],
@@ -242,24 +267,53 @@ def _token_request(cfg: OAuthConfig, form: Dict[str, str], post: PostFn,
         scope = _scope_claim(access)  # some servers only put it inside the token
     if isinstance(scope, str) and _SAFE_SCOPE.fullmatch(scope):
         tokens["scope"] = scope  # the scopes the server actually granted; not a secret
+    lifetime = _refresh_lifetime(payload, tokens["refresh_token"])
+    if lifetime:
+        tokens["refresh_lifetime_s"] = lifetime  # how long the server lets a refresh token live
     return tokens
 
 
-def _scope_claim(token: str) -> Optional[str]:
-    """The ``scope`` claim of a JWT access token, read without verifying it.
+MAX_LIFETIME_S = 10 * 365 * 86400
 
-    Informational only (what to show the owner); nothing is trusted or decided from it.
-    Returns None for an opaque token or anything unexpected.
-    """
+
+def _plausible(value: object) -> Optional[int]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    return int(value) if 0 < value <= MAX_LIFETIME_S else None
+
+
+def _refresh_lifetime(payload: dict, refresh: Optional[str]) -> Optional[int]:
+    """Seconds a refresh token lives, if the server says so: the ``refresh_expires_in`` field of
+    the reply, else ``exp - iat`` of a JWT-shaped refresh token. A number only, never the token.
+    None when the server tells us nothing (the lifetime is then unknown, not infinite)."""
+    stated = _plausible(payload.get("refresh_expires_in"))
+    if stated:
+        return stated
+    claims = _claims(refresh) if isinstance(refresh, str) else {}
+    exp, iat = claims.get("exp"), claims.get("iat")
+    if (isinstance(exp, (int, float)) and isinstance(iat, (int, float))
+            and not isinstance(exp, bool) and not isinstance(iat, bool)):
+        return _plausible(exp - iat)
+    return None
+
+
+def _claims(token: str) -> dict:
+    """The claims of a JWT, read without verifying it. Informational only: nothing is trusted or
+    decided from them. An opaque token or anything unexpected gives an empty dict."""
     parts = token.split(".")
     if len(parts) != 3:
-        return None
+        return {}
     try:
         padded = parts[1] + "=" * (-len(parts[1]) % 4)
         claims = json.loads(base64.urlsafe_b64decode(padded))
     except (ValueError, TypeError):
-        return None
-    scope = claims.get("scope") if isinstance(claims, dict) else None
+        return {}
+    return claims if isinstance(claims, dict) else {}
+
+
+def _scope_claim(token: str) -> Optional[str]:
+    """The ``scope`` claim of a JWT access token (what to show the owner), or None."""
+    scope = _claims(token).get("scope")
     return scope if isinstance(scope, str) else None
 
 
@@ -384,6 +438,8 @@ class TokenManager:
                 new["refresh_token"] = refresh  # server did not rotate: keep the one we have
             if "scope" not in new and isinstance(tokens.get("scope"), str):
                 new["scope"] = tokens["scope"]
+            if "refresh_lifetime_s" not in new and _plausible(tokens.get("refresh_lifetime_s")):
+                new["refresh_lifetime_s"] = tokens["refresh_lifetime_s"]  # keep what was learned
             self._store.save(new)
             return new["access_token"]
 
@@ -401,6 +457,7 @@ class TokenManager:
         # "signed_in" here means only that a token file is on disk. Whether the server still
         # accepts it is a separate fact, recorded by the collector and read by ``describe``.
         return {"signed_in": True, "granted_scopes": granted, "saved_at": saved_at,
+                "refresh_lifetime_s": _plausible(tokens.get("refresh_lifetime_s")),
                 "access_token_valid_for": max(0, int(tokens.get("expires_at", 0) - self._clock()))}
 
 
@@ -409,6 +466,29 @@ def _stamp(epoch) -> str:
         return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(float(epoch)))
     except (TypeError, ValueError, OverflowError, OSError):
         return "an unknown time"
+
+
+def format_utc(epoch) -> str:
+    """A UTC timestamp to the second, for the history listing."""
+    try:
+        return time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime(float(epoch)))
+    except (TypeError, ValueError, OverflowError, OSError):
+        return "unknown time"
+
+
+def format_duration(seconds) -> str:
+    """'45 s', '14 min', '3.2 h' or '4.1 days': short and honest about being rounded."""
+    try:
+        s = float(seconds)
+    except (TypeError, ValueError):
+        return "an unknown time"
+    if s < 90:
+        return f"{int(s)} s"
+    if s < 5400:
+        return f"{int(round(s / 60))} min"
+    if s < 172800:
+        return f"{s / 3600:.1f} h"
+    return f"{s / 86400:.1f} days"
 
 
 def describe(info: Optional[dict], record: Optional[dict]) -> Tuple[str, str]:

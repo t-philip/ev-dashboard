@@ -63,12 +63,43 @@ def explore(settings: config.Settings, manager: auth.TokenManager, paths) -> int
         db.close()
 
 
+def history(db_path) -> int:
+    """Print every recorded change of the sign-in state, oldest first. Facts only."""
+    try:
+        db = store.Store(db_path, readonly=True)
+    except Exception:  # no database yet: nothing has been recorded
+        print("no sign-in history recorded yet")
+        return 0
+    try:
+        events = db.auth_events(200)
+    except Exception:  # an older database without the table
+        print("no sign-in history recorded yet")
+        return 0
+    finally:
+        db.close()
+    if not events:
+        print("no sign-in history recorded yet")
+        return 0
+    for event in events:
+        detail = []
+        if event["http_status"]:
+            detail.append(f"HTTP {event['http_status']}")
+        if event["error"]:
+            detail.append(str(event["error"]))
+        after = ""
+        if event["previous_state"]:
+            after = f"  after {auth.format_duration(event['previous_for_s'])} {event['previous_state']}"
+        print(f"{auth.format_utc(event['at'])}  {event['state']:<11}"
+              f"{(' ' + ', '.join(detail)) if detail else ''}{after}")
+    return 0
+
+
 def main(argv=None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     command = args[0] if args else ""
-    if command not in ("serve", "status", "refresh", "poll", "collect", "probe"):
-        print("usage: python -m evdash serve | status | refresh | poll | collect | probe [PATH...]",
-              file=sys.stderr)
+    if command not in ("serve", "status", "history", "refresh", "poll", "collect", "probe"):
+        print("usage: python -m evdash serve | status | history | refresh | poll | collect "
+              "| probe [PATH...]", file=sys.stderr)
         return 2
     try:
         settings = config.load(need_api_key=command in ("poll", "collect", "probe"))
@@ -88,7 +119,14 @@ def main(argv=None) -> int:
             print("granted scopes:", " ".join(info["granted_scopes"]))
         elif info["signed_in"]:
             print("granted scopes: not reported by the server")
+        if info.get("signed_in"):
+            life = info.get("refresh_lifetime_s")
+            print("refresh token lifetime:", auth.format_duration(life) if life
+                  else "not reported by the server")
         return 0
+
+    if command == "history":
+        return history(settings.db_path)
 
     if command == "refresh":
         return refresh(manager)

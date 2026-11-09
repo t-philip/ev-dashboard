@@ -409,6 +409,55 @@ class CollectorBehaviour(unittest.TestCase):
         self.assertGreater(record["since"], began)
         self.assertNotIn("http_status", record)
 
+    def test_every_change_is_kept_as_history_with_what_came_before(self):
+        down = auth.EndpointUnreachable("token endpoint unreachable", error_code="timeout")
+        refused = auth.TokenInvalid("m", http_status=400, error_code="invalid_grant")
+        with self.assertLogs("evdash.collector", level="WARNING") as logs:
+            self.make(FakeApi(), manager=FakeManager(down)).run_once()
+            self.clock.now += 840
+            self.make(FakeApi(), manager=FakeManager(refused)).run_once()
+        self.assertIn("reason=timeout", "\n".join(logs.output))
+        self.clock.now += 300
+        self.make(FakeApi(default=(200, {}))).run_once()
+        events = self.db.auth_events()
+        self.assertEqual([e["state"] for e in events], ["unreachable", "rejected", "ok"])
+        self.assertEqual([e["previous_state"] for e in events], [None, "unreachable", "rejected"])
+        self.assertEqual(events[0]["error"], "timeout")
+        self.assertEqual((events[1]["http_status"], events[1]["error"]), (400, "invalid_grant"))
+        self.assertEqual(events[1]["previous_for_s"], 840)  # how long the unreachable state lasted
+        self.assertEqual(events[2]["previous_for_s"], 300)
+
+    def test_an_unchanged_state_adds_no_history_rows(self):
+        refused = auth.TokenInvalid("m", http_status=400, error_code="invalid_grant")
+        bad = self.make(FakeApi(), manager=FakeManager(refused))
+        with self.assertLogs("evdash.collector", level="WARNING"):
+            for _ in range(4):
+                self.clock.now += 300
+                bad.run_once()
+        self.assertEqual(len(self.db.auth_events()), 1)
+
+    def test_history_command_lists_the_events_in_words(self):
+        import contextlib
+        import io
+        self.db.add_auth_event(T0, "unreachable", None, None, None, "timeout")
+        self.db.add_auth_event(T0 + 840, "rejected", "unreachable", 840, 400, "invalid_grant")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.history(self.db.path), 0)
+        text = out.getvalue()
+        self.assertIn("rejected", text)
+        self.assertIn("HTTP 400, invalid_grant", text)
+        self.assertIn("after 14 min unreachable", text)
+        self.assertIn("1999-03-04 05:20:00 UTC", text)
+
+    def test_history_command_without_a_database_says_so(self):
+        import contextlib
+        import io
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(cli.history(Path(self.tmp.name) / "missing.db"), 0)
+        self.assertIn("no sign-in history", out.getvalue())
+
     def test_the_reason_never_holds_a_token_or_secret(self):
         err = auth.TokenInvalid("m", http_status=400, error_code="invalid_grant")
         with self.assertLogs("evdash.collector", level="WARNING") as logs:

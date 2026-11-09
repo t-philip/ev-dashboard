@@ -388,6 +388,79 @@ class RealHttpExchange(unittest.TestCase):
 
 
 
+class Diagnostics(unittest.TestCase):
+    """Why a request got no answer, and how long the server lets a refresh token live."""
+
+    @staticmethod
+    def _jwt(**claims):
+        payload = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode().rstrip("=")
+        return f"test-data-header.{payload}.test-data-signature"
+
+    def _tokens(self, payload, refresh="test-data-r1"):
+        body = {"access_token": "test-data-a1", "refresh_token": refresh, "expires_in": 300, **payload}
+        return auth._token_request(make_cfg(), {"grant_type": "refresh_token"},
+                                   lambda url, form, headers: (200, body), lambda: 100.0)
+
+    def test_reason_words(self):
+        import http.client
+        import socket
+        import ssl
+        cases = [(socket.gaierror(-3, "x"), "dns"), (socket.timeout(), "timeout"),
+                 (ConnectionRefusedError(), "refused"), (ConnectionResetError(), "reset"),
+                 (http.client.RemoteDisconnected("x"), "reset"), (ssl.SSLError(), "tls"),
+                 (OSError(), "network"), (ValueError(), "other")]
+        for reason, word in cases:
+            self.assertEqual(auth.unreachable_reason(reason), word, repr(reason))
+
+    def test_an_unreachable_endpoint_carries_the_reason_word_and_never_the_text(self):
+        import socket
+        import urllib.error
+        failure = urllib.error.URLError(socket.gaierror(-3, "test-data-leaky-detail"))
+        with mock.patch("evdash.auth._open", side_effect=failure), mock.patch("evdash.auth.time.sleep"):
+            with self.assertRaises(auth.EndpointUnreachable) as ctx:
+                auth.post_form("https://idp.example.test/token", {}, {})
+        self.assertEqual(ctx.exception.error_code, "dns")
+        self.assertNotIn("leaky", str(ctx.exception))
+
+    def test_lifetime_comes_from_the_reply_field(self):
+        self.assertEqual(self._tokens({"refresh_expires_in": 900})["refresh_lifetime_s"], 900)
+
+    def test_lifetime_comes_from_a_jwt_shaped_refresh_token(self):
+        refresh = self._jwt(iat=1000, exp=1900)
+        self.assertEqual(self._tokens({}, refresh=refresh)["refresh_lifetime_s"], 900)
+
+    def test_a_missing_or_implausible_lifetime_is_unknown_not_infinite(self):
+        for stated in (0, -5, True, "900", 10 ** 12):
+            self.assertNotIn("refresh_lifetime_s", self._tokens({"refresh_expires_in": stated}), stated)
+        self.assertNotIn("refresh_lifetime_s", self._tokens({}))
+        self.assertNotIn("refresh_lifetime_s", self._tokens({}, refresh=self._jwt(iat=5, exp=5)))
+
+    def test_the_lifetime_is_never_the_token_itself(self):
+        refresh = self._jwt(iat=1000, exp=1900)
+        text = json.dumps({k: v for k, v in self._tokens({}, refresh=refresh).items()
+                           if k == "refresh_lifetime_s"})
+        self.assertNotIn(refresh, text)
+
+    def test_the_lifetime_is_kept_across_a_refresh_that_omits_it(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        store = auth.TokenStore(Path(tmp.name) / "tokens.json")
+        store.save({"access_token": "test-data-a1", "refresh_token": "test-data-r1",
+                    "expires_at": 0, "refresh_lifetime_s": 900})
+        idp = FakeIdP([(200, {"access_token": "test-data-a2", "refresh_token": "test-data-r2",
+                              "expires_in": 300})])
+        auth.TokenManager(make_cfg(), store, post=idp).access_token()
+        self.assertEqual(store.load()["refresh_lifetime_s"], 900)
+        self.assertEqual(auth.TokenManager(make_cfg(), store, post=idp).status()["refresh_lifetime_s"], 900)
+
+    def test_durations_read_naturally(self):
+        self.assertEqual(auth.format_duration(5), "5 s")
+        self.assertEqual(auth.format_duration(14 * 60), "14 min")
+        self.assertEqual(auth.format_duration(100000), "27.8 h")
+        self.assertEqual(auth.format_duration(400000), "4.6 days")
+        self.assertEqual(auth.format_duration(None), "an unknown time")
+
+
 class Describe(unittest.TestCase):
     """What is true about the sign-in, in words: a parked car is never one of the states."""
 

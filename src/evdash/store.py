@@ -37,6 +37,15 @@ CREATE TABLE IF NOT EXISTS group_state (
 );
 CREATE TABLE IF NOT EXISTS api_calls (day TEXT PRIMARY KEY, calls INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS auth_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at REAL NOT NULL,            -- when the new state began (seconds since the epoch)
+    state TEXT NOT NULL,         -- ok | rejected | unreachable | no_sign_in | error
+    previous_state TEXT,         -- what it was before, None for the first record
+    previous_for_s REAL,         -- how long the previous state had lasted
+    http_status INTEGER,         -- what the server answered, when it answered
+    error TEXT                   -- the server's short error word, or why nothing was answered
+);
 """
 
 
@@ -126,6 +135,23 @@ class Store:
     def set_meta(self, key: str, value: str) -> None:
         self._db.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", (key, value))
         self._db.commit()
+
+    def add_auth_event(self, at: float, state: str, previous_state: Optional[str],
+                       previous_for_s: Optional[float], http_status: Optional[int],
+                       error: Optional[str]) -> None:
+        """One row each time the sign-in state changes: the history that shows patterns."""
+        self._db.execute(
+            "INSERT INTO auth_events (at, state, previous_state, previous_for_s, http_status, error) "
+            "VALUES (?, ?, ?, ?, ?, ?)", (at, state, previous_state, previous_for_s, http_status, error))
+        self._db.commit()
+
+    def auth_events(self, limit: int = 50) -> List[dict]:
+        """The newest ``limit`` events, oldest first."""
+        rows = self._db.execute(
+            "SELECT at, state, previous_state, previous_for_s, http_status, error "
+            "FROM auth_events ORDER BY id DESC LIMIT ?", (max(1, int(limit)),)).fetchall()
+        keys = ("at", "state", "previous_state", "previous_for_s", "http_status", "error")
+        return [dict(zip(keys, row)) for row in reversed(rows)]
 
     def fingerprint(self) -> Tuple[int, int]:
         """(highest row id, row count): changes whenever readings are added or deleted."""

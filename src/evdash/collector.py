@@ -148,8 +148,8 @@ class Collector:
             return summary
         except auth.EndpointUnreachable as err:
             # Nothing was decided: the sign-in may be perfectly good. Retry, do not alarm.
-            log.warning("could not reach Volvo's token service (%s): retrying; the saved "
-                        "sign-in has not been judged", err)
+            log.warning("could not reach Volvo's token service (%s, reason=%s): retrying; the "
+                        "saved sign-in has not been judged", err, err.error_code or "unknown")
             self._note_auth("unreachable", err)
             summary["failed"] += 1
             return summary
@@ -195,9 +195,17 @@ class Collector:
                 and old.get("error") == record.get("error"))
         if same:
             return  # nothing new: keep the original start time
-        if isinstance(old, dict) and old.get("state") and old.get("state") != state:
-            log.info("sign-in state changed: %s -> %s", old.get("state"), state)
+        previous = old.get("state") if isinstance(old, dict) else None
+        began = old.get("since") if isinstance(old, dict) else None
+        if previous and previous != state:
+            log.info("sign-in state changed: %s -> %s", previous, state)
         self._store.set_meta("auth_state", json.dumps(record))
+        # Every change is also kept as a history row, so the pattern of refusals (when, after
+        # what, how long things had been fine) can be read back later. Facts only.
+        self._store.add_auth_event(
+            record["since"], state, previous,
+            (record["since"] - began) if isinstance(began, (int, float)) else None,
+            record.get("http_status"), record.get("error"))
 
     def run_forever(self, stop: threading.Event) -> None:
         while not stop.is_set():

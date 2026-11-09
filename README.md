@@ -47,6 +47,7 @@ CI yet. Run the application from the repository root with `PYTHONPATH=src python
 | `poll` | One polling pass; prints counts only |
 | `probe [PATH...]` | Requests endpoints once and prints each reply's shape (field names, types and short status words, never values) |
 | `status` | The state of the sign-in: none on file, not yet checked, accepted by the manufacturer, refused (with the HTTP status and error word the server sent) or the token service unreachable; and which scopes were granted |
+| `history` | Every recorded change of the sign-in state (accepted, refused, unreachable, none on file) with the time, the HTTP status or reason, and how long the previous state had lasted, so patterns can be read back |
 | `refresh` | Refreshes the stored sign-in if it is due |
 
 Run `serve` and `collect` as two services sharing one database. Settings are environment variables:
@@ -106,9 +107,12 @@ network-boundary rule applies, and it matters more here.
 4. Start `serve`, open its page, press **Sign in**, and approve. You are redirected back and the
    page then shows which scopes were granted.
 5. Run `collect` as a second service (for example a systemd unit that restarts on failure). The
-   sign-in stays alive only while it is used: according to the manufacturer's documentation a refresh
-   token unused for seven days becomes invalid. The collector refreshes the access token whenever it
-   is due; if you stop it for longer than that, run `refresh` within the window or sign in again.
+   sign-in stays alive only while it is used. The manufacturer's documentation says refresh tokens
+   rotate on every use (the old one stops working), that their default lifetime is short and is longer
+   if the remember-me option on the login screen is ticked, and that a grant lasts at most 3 months if it is
+   refreshed continuously. `status` shows the refresh-token lifetime the server reports, when it reports
+   one. The collector refreshes the access token whenever it is due; if you stop it for longer than a
+   refresh token lives, run `refresh` within that window or sign in again.
    A parked car never stops collection: while the collector runs it refreshes the sign-in every few
    minutes, whether or not the vehicle is used. Collection stops only when no sign-in is on file or
    the manufacturer refuses the saved one, for example when a refresh reply is lost in transit and the
