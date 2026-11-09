@@ -1,11 +1,13 @@
-"""Command line: ``python -m evdash serve | status | refresh | poll | collect | probe``."""
+"""Command line: ``python -m evdash serve | status | history | refresh | poll | collect | probe``."""
 from __future__ import annotations
 
 import json
 import logging
+import os
 import signal
 import sys
 import threading
+from pathlib import Path
 
 from . import auth, collector, config, probe, redact, store
 from .server import App, make_server
@@ -104,6 +106,9 @@ def main(argv=None) -> int:
         print("usage: python -m evdash serve | status | history | refresh | poll | collect "
               "| probe [PATH...]", file=sys.stderr)
         return 2
+    if command == "history":
+        # Reads only the local database: no OAuth credentials are needed, so it runs from a plain shell.
+        return history(Path(os.environ.get("EVDASH_DB", "data/evdash.db")))
     try:
         settings = config.load(need_api_key=command in ("poll", "collect", "probe"))
     except config.ConfigError as err:
@@ -128,8 +133,6 @@ def main(argv=None) -> int:
                   else "not reported by the server")
         return 0
 
-    if command == "history":
-        return history(settings.db_path)
 
     if command == "refresh":
         return refresh(manager)

@@ -482,6 +482,16 @@ class CollectorBehaviour(unittest.TestCase):
         self.assertIn("sign-in last renewed 17 min before", text)
         self.assertIn("1999-03-04 05:16:00 UTC", text)
 
+    def test_history_runs_from_a_plain_shell_without_any_credentials(self):
+        import contextlib
+        import io
+        self.db.add_auth_event(T0, "rejected", "ok", 100, 400, "invalid_grant", 60)
+        out = io.StringIO()
+        with mock.patch.dict(os.environ, {"EVDASH_DB": str(self.db.path)}, clear=True), \
+                contextlib.redirect_stdout(out):
+            self.assertEqual(cli.main(["history"]), 0)  # no client id, secret or redirect URI set
+        self.assertIn("rejected", out.getvalue())
+
     def test_history_command_without_a_database_says_so(self):
         import contextlib
         import io
