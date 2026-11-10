@@ -9,7 +9,7 @@ import sys
 import threading
 from pathlib import Path
 
-from . import auth, collector, config, probe, redact, store
+from . import __version__, auth, collector, config, probe, redact, store, tiles
 from .server import App, make_server
 
 
@@ -143,8 +143,13 @@ def main(argv=None) -> int:
     if command == "probe":
         return explore(settings, manager, args[1:])
 
+    tile_cache = None
+    if settings.map_tiles and settings.location:
+        tile_cache = tiles.TileCache(
+            settings.db_path.parent / "tiles", settings.tile_url,
+            f"evdash/{__version__} (+https://github.com/t-philip/ev-dashboard)")
     server = make_server(App(settings.oauth, manager, auth.PendingSignIns(), settings.db_path,
-                             location=settings.location, tz=settings.tz),
+                             location=settings.location, tz=settings.tz, tiles=tile_cache),
                          settings.listen_host, settings.listen_port)
     logging.getLogger("evdash").info("listening on %s:%s", settings.listen_host,
                                      settings.listen_port)

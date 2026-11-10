@@ -86,6 +86,14 @@ class Config(unittest.TestCase):
         for url in (s.oauth.authorize_url, s.oauth.token_url):
             self.assertTrue(url.startswith("https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/"))
 
+    def test_map_tiles_are_off_by_default_and_the_address_is_checked(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(config.load(self.env(d)).map_tiles)
+            self.assertTrue(config.load(self.env(d, EVDASH_MAP_TILES="1")).map_tiles)
+            for bad in ("http://tiles.example.test/{z}/{x}/{y}.png", "https://tiles.example.test/{z}/{x}.png"):
+                with self.assertRaises(config.ConfigError):
+                    config.load(self.env(d, EVDASH_TILE_URL=bad))
+
     def test_secret_in_environment_value_is_not_accepted(self):
         with tempfile.TemporaryDirectory() as d:
             env = self.env(d)

@@ -63,6 +63,8 @@ Run `serve` and `collect` as two services sharing one database. Settings are env
 | `EVDASH_VIN` | Vehicle to use; if unset, the first vehicle on the account |
 | `EVDASH_LOCATION` | `1` to collect location and show the trips pages; off by default. Needs `location:read` in `EVDASH_SCOPES` and a new sign-in |
 | `EVDASH_LOCATION_RETENTION_DAYS` | How long location readings are kept (default 365, at most 3650). Older ones are deleted once a day and the database file is then compacted (copies in backups or synced folders are not touched) |
+| `EVDASH_MAP_TILES` | `1` to draw the trips on an OpenStreetMap map; off by default (a plain scale drawing). Your browser never contacts the map service: this server fetches each tile once, keeps it under `data/tiles`, and serves it itself. The map service therefore sees this server's address and the tile numbers requested, which locate the area you look at, but not your device or the page address |
+| `EVDASH_TILE_URL` | Tile address with `{z}`, `{x}` and `{y}` (default: the OpenStreetMap standard tile server; follow its tile usage policy) |
 | `EVDASH_TIMEZONE` | Time zone name for the times on the trips pages (default `UTC`; needs the system's time zone data for any other) |
 
 Credentials are read from files, never from environment values: `client_id`, `client_secret` and

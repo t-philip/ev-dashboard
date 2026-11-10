@@ -15,6 +15,7 @@ from typing import Mapping, Optional, Tuple
 
 from .auth import OAuthConfig
 from .collector import DEFAULT_BASE, DEFAULT_BUDGET, MAX_BUDGET
+from .tiles import DEFAULT_URL as DEFAULT_TILE_URL
 
 DEFAULT_AUTHORIZE_URL = "https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/auth"
 DEFAULT_TOKEN_URL = "https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/token"
@@ -38,6 +39,8 @@ class Settings:
     location: bool = False             # opt-in: location is never collected unless enabled
     location_retention_days: int = 365
     tz: datetime.tzinfo = datetime.timezone.utc   # how times are shown on the trip pages
+    map_tiles: bool = False            # opt-in: draw the trips on map tiles fetched by this server
+    tile_url: str = DEFAULT_TILE_URL
 
 
 def read_credential(name: str, env: Mapping[str, str]) -> str:
@@ -114,6 +117,9 @@ def load(env: Mapping[str, str] = os.environ, need_api_key: bool = False) -> Set
     if not 1 <= retention <= 3650:
         raise ConfigError("EVDASH_LOCATION_RETENTION_DAYS must be between 1 and 3650")
     tz = resolve_timezone(env.get("EVDASH_TIMEZONE", "UTC"))
+    tile_url = env.get("EVDASH_TILE_URL", DEFAULT_TILE_URL)
+    if not (tile_url.startswith("https://") and all(k in tile_url for k in ("{z}", "{x}", "{y}"))):
+        raise ConfigError("EVDASH_TILE_URL must be an https:// address containing {z}, {x} and {y}")
     return Settings(
         oauth, host or "127.0.0.1", port_number,
         Path(env.get("EVDASH_TOKEN_FILE", "data/tokens.json")),
@@ -123,4 +129,5 @@ def load(env: Mapping[str, str] = os.environ, need_api_key: bool = False) -> Set
         api_key=read_credential("vcc_api_key", env) if need_api_key else None,
         vins=vins,
         location=env.get("EVDASH_LOCATION", "") == "1",
-        location_retention_days=retention, tz=tz)
+        location_retention_days=retention, tz=tz,
+        map_tiles=env.get("EVDASH_MAP_TILES", "") == "1", tile_url=tile_url)

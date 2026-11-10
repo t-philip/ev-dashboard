@@ -1,8 +1,10 @@
-"""A map drawn without any map service: points on a plain background, to scale.
+"""A map of points, to scale: on a plain background by default, on map tiles when the owner opts in.
 
-Nothing is fetched from anywhere: the picture is an inline SVG built from the coordinates, so no
-coordinate leaves the machine when a page is viewed. There are no roads or coastlines, only the
-points, a scale bar and a north marker. Straight lines between points are labelled by the caller
+By default nothing is fetched from anywhere: the picture is an inline SVG built from the
+coordinates, so no coordinate leaves the machine when a page is viewed. There are no roads or
+coastlines, only the points, a scale bar and a north marker. With ``tiles=True`` the same points
+are drawn over tile images that this server serves from its own address (see ``tiles``); the
+browser still talks only to this server. Straight lines between points are labelled by the caller
 as straight lines, never as routes.
 """
 from __future__ import annotations
@@ -27,12 +29,14 @@ def _valid(lat: float, lon: float) -> bool:
             and math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180)
 
 
-def render(points: Sequence[Point], lines: Sequence[Line] = ()) -> str:
+def render(points: Sequence[Point], lines: Sequence[Line] = (), tiles: bool = False) -> str:
     pts = [p for p in points if _valid(p[0], p[1])]
     segs = [l for l in lines if _valid(*l[0]) and _valid(*l[1])]
     coords = [(p[0], p[1]) for p in pts] + [c for l in segs for c in l]
     if not coords:
         return "<p>No positions to show.</p>"
+    if tiles:
+        return _render_tiles(pts, segs, coords)
     lat_c = (min(c[0] for c in coords) + max(c[0] for c in coords)) / 2
     lon_c = (min(c[1] for c in coords) + max(c[1] for c in coords)) / 2
     kx = KM_PER_DEG_LON_EQUATOR * math.cos(math.radians(lat_c))
@@ -76,5 +80,83 @@ def render(points: Sequence[Point], lines: Sequence[Line] = ()) -> str:
     out.append(f'<line x1="{x0}" y1="{y0}" x2="{x0 + bar_px:.1f}" y2="{y0}" stroke="currentColor" stroke-width="3"/>')
     out.append(f'<text x="{x0}" y="{y0 - 6}" font-size="12" fill="currentColor">{label}</text>')
     out.append(f'<text x="{WIDTH - 24}" y="22" font-size="14" fill="currentColor">N&#8593;</text>')
+    out.append("</svg>")
+    return "".join(out)
+
+
+# -- map tiles (opt-in) ------------------------------------------------------------------------
+
+TILE = 256
+TILE_ZOOM_MAX = 16
+
+
+def _world(lat: float, lon: float, z: int) -> Tuple[float, float]:
+    """Pixel position on the whole-world Web Mercator image at zoom z."""
+    n = TILE * 2 ** z
+    s = min(max(math.sin(math.radians(lat)), -0.9999), 0.9999)
+    return (lon + 180.0) / 360.0 * n, (0.5 - math.log((1 + s) / (1 - s)) / (4 * math.pi)) * n
+
+
+def _render_tiles(pts, segs, coords) -> str:
+    inner_w, inner_h = WIDTH - 2 * PAD, HEIGHT - 2 * PAD
+    z = 2
+    for candidate in range(TILE_ZOOM_MAX, 1, -1):
+        wx = [_world(c[0], c[1], candidate)[0] for c in coords]
+        wy = [_world(c[0], c[1], candidate)[1] for c in coords]
+        if max(wx) - min(wx) <= inner_w and max(wy) - min(wy) <= inner_h:
+            z = candidate
+            break
+    wx = [_world(c[0], c[1], z)[0] for c in coords]
+    wy = [_world(c[0], c[1], z)[1] for c in coords]
+    ox = (max(wx) + min(wx)) / 2 - WIDTH / 2
+    oy = (max(wy) + min(wy)) / 2 - HEIGHT / 2
+    lat_c = (min(c[0] for c in coords) + max(c[0] for c in coords)) / 2
+
+    def px(lat, lon):
+        x, y = _world(lat, lon, z)
+        return x - ox, y - oy
+
+    count = 2 ** z
+    out = [f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {WIDTH} {HEIGHT}" width="100%" '
+           f'role="img" style="max-width:{WIDTH}px;border:1px solid currentColor;border-radius:6px;'
+           'background:#ddd"><title>Positions on a map</title>']
+    for tx in range(math.floor(ox / TILE), math.floor((ox + WIDTH) / TILE) + 1):
+        for ty in range(math.floor(oy / TILE), math.floor((oy + HEIGHT) / TILE) + 1):
+            if 0 <= ty < count:
+                out.append(f'<image href="/tiles/{z}/{tx % count}/{ty}.png" x="{tx * TILE - ox:.1f}" '
+                           f'y="{ty * TILE - oy:.1f}" width="{TILE}" height="{TILE}"/>')
+    for a, b in segs:
+        (x1, y1), (x2, y2) = px(*a), px(*b)
+        d = f'x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}"'
+        out.append(f'<line {d} stroke="#fff" stroke-width="5" opacity=".8"/>')
+        out.append(f'<line {d} stroke="#b3261e" stroke-width="2.5" stroke-dasharray="7 5"/>')
+    for lat, lon, label, kind in pts:
+        x, y = px(lat, lon)
+        title = f"<title>{html.escape(str(label))}</title>"
+        if kind == "start":
+            out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="8" fill="#fff" stroke="#1b4fd8" '
+                       f'stroke-width="3.5">{title}</circle>')
+        elif kind == "end":
+            out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="8" fill="#1b4fd8" stroke="#fff" '
+                       f'stroke-width="2.5">{title}</circle>')
+        else:
+            out.append(f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#1b4fd8" stroke="#fff" '
+                       f'stroke-width="2">{title}</circle>')
+    metres_per_px = 156543.03392 * math.cos(math.radians(lat_c)) / count
+    per_km = 1000.0 / metres_per_px
+    bar_km = max((k for k in NICE_KM if k * per_km <= WIDTH / 4), default=NICE_KM[0])
+    bar_px = bar_km * per_km
+    x0, y0 = 16, HEIGHT - 22
+    label = f"{bar_km:g} km" if bar_km >= 1 else f"{round(bar_km * 1000)} m"
+    out.append(f'<rect x="{x0 - 6}" y="{y0 - 22}" width="{max(bar_px, 46) + 12:.1f}" height="36" '
+               'fill="#fff" opacity=".8" rx="3"/>')
+    out.append(f'<line x1="{x0}" y1="{y0}" x2="{x0 + bar_px:.1f}" y2="{y0}" stroke="#000" stroke-width="3"/>')
+    out.append(f'<text x="{x0}" y="{y0 - 6}" font-size="12" fill="#000">{label}</text>')
+    out.append(f'<text x="{WIDTH - 24}" y="22" font-size="14" fill="#000" stroke="#fff" '
+               'stroke-width="3" paint-order="stroke">N&#8593;</text>')
+    out.append(f'<rect x="{WIDTH - 196}" y="{HEIGHT - 20}" width="196" height="20" fill="#fff" opacity=".8"/>')
+    out.append(f'<a href="https://www.openstreetmap.org/copyright" target="_blank" '
+               f'rel="noreferrer noopener"><text x="{WIDTH - 192}" y="{HEIGHT - 6}" font-size="11" '
+               'fill="#0645ad">&#169; OpenStreetMap contributors</text></a>')
     out.append("</svg>")
     return "".join(out)

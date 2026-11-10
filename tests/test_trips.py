@@ -10,7 +10,7 @@ from unittest import mock
 import urllib.request
 from pathlib import Path
 
-from evdash import auth, collector, config, mapview, parse, server, store, tripviews
+from evdash import tiles as tiles_mod, auth, collector, config, mapview, parse, server, store, tripviews
 from evdash import trips as trips_mod
 
 # Fictitious values only: nothing here is, or resembles, a real place, vehicle or person.
@@ -266,7 +266,7 @@ class FakeManager:
         return {"signed_in": True, "granted_scopes": ["openid"]}
 
 
-class Web(unittest.TestCase):
+class WebHarness(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -275,8 +275,9 @@ class Web(unittest.TestCase):
         self.cfg = auth.OAuthConfig("test-data-id", "test-data-secret", "https://x.example.test/cb",
                                     "https://x.example.test/a", "https://x.example.test/t", ("openid",))
 
-    def get(self, path, location, tz=UTC):
-        app = server.App(self.cfg, FakeManager(), auth.PendingSignIns(), self.db_path, location=location, tz=tz)
+    def get(self, path, location, tz=UTC, tiles=None, raw=False):
+        app = server.App(self.cfg, FakeManager(), auth.PendingSignIns(), self.db_path, location=location, tz=tz,
+                         tiles=tiles)
         srv = server.make_server(app, "127.0.0.1", 0)
         threading.Thread(target=srv.serve_forever, daemon=True).start()
         self.addCleanup(srv.server_close)
@@ -284,10 +285,14 @@ class Web(unittest.TestCase):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         try:
             with opener.open(f"http://127.0.0.1:{srv.server_address[1]}{path}", timeout=10) as r:
-                return r.status, r.read().decode(), dict(r.headers)
+                body = r.read()
+                return r.status, body if raw else body.decode(), dict(r.headers)
         except urllib.error.HTTPError as err:
-            return err.code, err.read().decode(), dict(err.headers)
+            body = err.read()
+            return err.code, body if raw else body.decode(), dict(err.headers)
 
+
+class Web(WebHarness):
     def test_the_trip_pages_do_not_exist_unless_location_is_on(self):
         for path in ("/trips", "/trips/" + trips_mod.trip_id(B[0])):
             status, body, _ = self.get(path, location=False)
@@ -606,3 +611,62 @@ class Settings(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+PNG = bytes([0x89]) + b"PNG" + bytes([13, 10, 26, 10]) + b"test-data-tile"
+
+
+class WebTiles(WebHarness):
+    """The opt-in map: tiles are served by this server, never fetched by the browser."""
+
+    def cache(self, fetched=None):
+        def download(url, agent):
+            if fetched is not None:
+                fetched.append(url)
+            return PNG
+        return tiles_mod.TileCache(Path(self.tmp.name) / "tiles", "https://tiles.example.test/{z}/{x}/{y}.png",
+                                   "test-agent", download=download)
+
+    def test_no_tile_route_unless_enabled_and_location_is_on(self):
+        self.assertEqual(self.get("/tiles/5/16/10.png", location=True)[0], 404)
+        fetched = []
+        self.assertEqual(self.get("/tiles/5/16/10.png", location=False, tiles=self.cache(fetched))[0], 404)
+        self.assertEqual(fetched, [])
+
+    def test_a_tile_is_fetched_once_then_served_from_the_cache(self):
+        fetched = []
+        cache = self.cache(fetched)
+        status, body, headers = self.get("/tiles/5/16/10.png", location=True, tiles=cache, raw=True)
+        self.assertEqual((status, body), (200, PNG))
+        self.assertEqual(headers["Content-Type"], "image/png")
+        self.assertEqual(headers["Cache-Control"], "private, max-age=86400")
+        self.get("/tiles/5/16/10.png", location=True, tiles=cache, raw=True)
+        self.assertEqual(fetched, ["https://tiles.example.test/5/16/10.png"])
+
+    def test_bad_tile_numbers_are_refused_without_a_fetch(self):
+        fetched = []
+        cache = self.cache(fetched)
+        for path in ("/tiles/99/1/1.png", "/tiles/5/99/1.png", "/tiles/5/1/99.png", "/tiles/1/0/0.png",
+                     "/tiles/5/1/1.jpg", "/tiles/5/a/1.png", "/tiles/5/1/1.png/x", "/tiles/../etc/passwd"):
+            self.assertEqual(self.get(path, location=True, tiles=cache)[0], 404, path)
+        self.assertEqual(fetched, [])
+
+    def test_pages_show_tiles_only_when_enabled_and_allow_images_only_from_this_server(self):
+        _, off, off_headers = self.get("/trips", location=True)
+        _, on, on_headers = self.get("/trips", location=True, tiles=self.cache())
+        self.assertNotIn("/tiles/", off)
+        self.assertNotIn("img-src", off_headers["Content-Security-Policy"])
+        self.assertIn("<image href=\"/tiles/", on)
+        self.assertIn("OpenStreetMap contributors", on)
+        self.assertIn("img-src 'self'", on_headers["Content-Security-Policy"])
+        images = re.findall(r"<image href=.([^'\"]+)", on)
+        self.assertTrue(images and all(src.startswith("/tiles/") for src in images))
+        _, detail, _ = self.get("/trips/" + trips_mod.trip_id(B[0]), location=True, tiles=self.cache())
+        self.assertIn("<image href=\"/tiles/", detail)
+
+    def test_the_access_log_never_records_which_tiles_were_asked_for(self):
+        with self.assertLogs("evdash.server", level=logging.INFO) as logs:
+            self.get("/tiles/5/16/10.png", location=True, tiles=self.cache(), raw=True)
+        text = chr(10).join(logs.output)
+        self.assertIn("/tiles/[redacted]", text)
+        self.assertNotIn("16/10", text)

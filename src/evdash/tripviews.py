@@ -1,8 +1,9 @@
 """Pages for browsing past trips: a month at a time, and one trip in detail.
 
-Read-only. Maps are drawn by ``mapview`` with no external service; the one link that leaves the
-machine is an explicit "open in OpenStreetMap" link on the detail page, which does nothing until
-the owner clicks it.
+Read-only. Maps are drawn by ``mapview``: on a plain background by default, or on map tiles that
+this server fetches and serves itself when the owner opts in (``tiles``). The one link that leaves
+the machine is an explicit "open in OpenStreetMap" link on the detail page, which does nothing
+until the owner clicks it.
 """
 from __future__ import annotations
 
@@ -30,6 +31,8 @@ OFF = "<p>Location is turned off, so there are no trips to show.</p>"
 EMPTY = ("<p>No trips yet. A trip appears once the car's position has been reported at least twice, "
          "so location collection must be on and the location scope granted. History starts the day "
          "collection starts.</p>")
+MAP_NOTE = {False: "on a plain background",
+            True: "on an OpenStreetMap map (tiles are fetched by this server, which the map service sees; your browser talks only to this server)"}
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
@@ -116,7 +119,8 @@ def _load(db_path: Optional[Path]) -> Optional[Tuple[List[trips_mod.Stop], List[
         db.close()
 
 
-def render_list(db_path: Optional[Path], query: Dict[str, List[str]], tz: datetime.tzinfo) -> Tuple[int, str]:
+def render_list(db_path: Optional[Path], query: Dict[str, List[str]], tz: datetime.tzinfo,
+                tiles: bool = False) -> Tuple[int, str]:
     loaded = _load(db_path)
     trips = loaded[1] if loaded else []
     if not trips:
@@ -156,8 +160,8 @@ def render_list(db_path: Optional[Path], query: Dict[str, List[str]], tz: dateti
     body = (
         f"<p>{' '.join(nav)}</p>"
         f"<p>{len(shown)} {'trip' if len(shown) == 1 else 'trips'}, {sum(known):.0f} km where the distance is known.</p>"
-        f"{mapview.render(points, lines)}"
-        "<p class=muted>Stops drawn to scale on a plain background. Dashed lines join each trip's two "
+        f"{mapview.render(points, lines, tiles=tiles)}"
+        f"<p class=muted>Stops drawn to scale {MAP_NOTE[tiles]}. Dashed lines join each trip's two "
         "stops in a straight line: they are <strong>not</strong> the routes driven.</p>"
         "<table><tr><th>Ended</th><th>Distance</th><th>From</th><th>To</th><th>Battery</th></tr>"
         f"{''.join(rows)}</table>"
@@ -165,7 +169,8 @@ def render_list(db_path: Optional[Path], query: Dict[str, List[str]], tz: dateti
     return 200, shell("Trips", body)
 
 
-def render_detail(db_path: Optional[Path], trip_id: str, tz: datetime.tzinfo) -> Tuple[int, str]:
+def render_detail(db_path: Optional[Path], trip_id: str, tz: datetime.tzinfo,
+                  tiles: bool = False) -> Tuple[int, str]:
     if not _TRIP_ID.fullmatch(trip_id or ""):
         return 404, shell("Trip not found", "<p>No such trip.</p>")
     loaded = _load(db_path)
@@ -203,7 +208,7 @@ def render_detail(db_path: Optional[Path], trip_id: str, tz: datetime.tzinfo) ->
         nav.append(f"<a href='/trips/{html.escape(trips[pos + 1].id)}'>later trip &rarr;</a>")
     body = (
         f"<p>{' '.join(nav)}</p>{table}"
-        f"{mapview.render(pts, [((t.start.lat, t.start.lon), (t.end.lat, t.end.lon))])}"
+        f"{mapview.render(pts, [((t.start.lat, t.start.lon), (t.end.lat, t.end.lon))], tiles=tiles)}"
         "<p class=muted>Hollow circle: start. Filled circle: end. The dashed line is a straight line "
         "between the two stops: it is <strong>not</strong> the route driven, which the manufacturer "
         "does not provide.</p>"

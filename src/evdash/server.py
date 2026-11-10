@@ -18,11 +18,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
 
-from . import auth, store, tripviews, view
+from . import auth, store, tiles, tripviews, view
 
 log = logging.getLogger("evdash.server")
 
 _QUERY = re.compile(r"\?[^\s'\"]*")
+_TILE_PATH = re.compile(r"/tiles/(\d{1,2})/(\d{1,8})/(\d{1,8})\.png")
 
 _PAGES = {
     "/auth/done": ("Sign-in done", "Sign-in complete. You can close this tab."),
@@ -33,13 +34,15 @@ _PAGES = {
 class App:
     def __init__(self, cfg: auth.OAuthConfig, manager: auth.TokenManager,
                  pending: auth.PendingSignIns, db_path: Optional[Path] = None,
-                 location: bool = False, tz: datetime.tzinfo = datetime.timezone.utc):
+                 location: bool = False, tz: datetime.tzinfo = datetime.timezone.utc,
+                 tiles: Optional["tiles.TileCache"] = None):
         self.cfg = cfg
         self.manager = manager
         self.pending = pending
         self.db_path = db_path  # the collector's database, read-only, for the state view
         self.location = location  # opt-in: the trip pages exist only when location is turned on
         self.tz = tz              # the time zone trip times are shown in
+        self.tiles = tiles        # opt-in: map tiles, fetched and served by this server
 
 
 def make_server(app: App, host: str, port: int) -> ThreadingHTTPServer:
@@ -58,6 +61,8 @@ class _Handler(BaseHTTPRequestHandler):
     def log_request(self, code="-", size="-"):
         # On a malformed request line the parser has not set command/path yet.
         path = urllib.parse.urlsplit(getattr(self, "path", "")).path
+        if path.startswith("/tiles/"):
+            path = "/tiles/[redacted]"  # tile numbers locate the area being viewed
         log.info("%s %s %s", getattr(self, "command", None) or "-", path or "-", code)
 
     def log_message(self, format, *args):
@@ -76,6 +81,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._callback(urllib.parse.parse_qs(parts.query))
         elif parts.path == "/trips" or parts.path.startswith("/trips/"):
             self._trips(parts)
+        elif parts.path.startswith("/tiles/"):
+            self._tile(parts.path)
         elif parts.path in _PAGES:
             title, text = _PAGES[parts.path]
             self._text(200, text, title=title)
@@ -141,14 +148,35 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             if parts.path == "/trips":
                 status, page = tripviews.render_list(
-                    self.app.db_path, urllib.parse.parse_qs(parts.query), self.app.tz)
+                    self.app.db_path, urllib.parse.parse_qs(parts.query), self.app.tz,
+                    tiles=bool(self.app.tiles))
             else:
                 status, page = tripviews.render_detail(
-                    self.app.db_path, parts.path[len("/trips/"):], self.app.tz)
+                    self.app.db_path, parts.path[len("/trips/"):], self.app.tz,
+                    tiles=bool(self.app.tiles))
         except Exception as err:  # only the class is logged: the message could hold stored data
             log.warning("trip page failed: %s", type(err).__name__)
             status, page = 500, tripviews.shell("Trips", "<p>Something went wrong reading the trips.</p>")
         self._html(status, page)
+
+    def _tile(self, path):
+        match = _TILE_PATH.fullmatch(path)
+        if not (self.app.tiles and self.app.location) or not match:
+            return self._text(404, "Page not found")
+        z, x, y = (int(g) for g in match.groups())
+        data = self.app.tiles.get(z, x, y)
+        if data is None:
+            return self._text(404, "tile not available")
+        self.send_response(200)
+        self.send_header("Content-Type", "image/png")
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "private, max-age=86400")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
 
     def _html(self, status, page):
         body = page.encode("utf-8")
@@ -197,8 +225,10 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("X-Content-Type-Options", "nosniff")
         if styles:  # inline styles only; still no scripts and nothing fetched from elsewhere
+            # Map tiles, when enabled, come from this server's own address and nowhere else.
+            img = "; img-src 'self'" if self.app.tiles else ""
             self.send_header("Content-Security-Policy",
-                             "default-src 'none'; style-src 'unsafe-inline'")
+                             "default-src 'none'; style-src 'unsafe-inline'" + img)
             return
         # Deliberately no form-action directive: browsers apply it to the redirect that answers
         # the sign-in form post, and a restrictive value silently blocks the hand-off to the
