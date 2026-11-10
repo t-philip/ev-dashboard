@@ -1,0 +1,3 @@
+# The bundled third-party library is byte-for-byte the upstream release (a test checks its hash):
+src/evdash/static/leaflet.js -text
+src/evdash/static/leaflet.css -text
