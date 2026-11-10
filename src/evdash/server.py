@@ -18,7 +18,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
 
-from . import auth, store, tiles, tripviews, view
+from . import auth, store, theme, tiles, tripviews, view
 
 log = logging.getLogger("evdash.server")
 
@@ -119,26 +119,33 @@ class _Handler(BaseHTTPRequestHandler):
         headline = {"ok": "Signed in.", "rejected": "Sign-in refused by Volvo.",
                     "unreachable": "Volvo could not be reached.", "unverified": "Sign-in not yet checked.",
                     "no_sign_in": "Not signed in.", "unreadable": "Sign-in unreadable."}[kind]
-        state = f"<p><strong>{html.escape(headline)}</strong> {html.escape(sentence)}</p>"
+        pill_kind = {"ok": "good", "unverified": "warn", "unreachable": "warn"}.get(kind, "bad")
+        pill_text = {"ok": "Signed in", "rejected": "Sign-in refused", "unreachable": "Volvo unreachable",  # ui-text
+                     "unverified": "Not yet checked", "no_sign_in": "Not signed in",
+                     "unreadable": "Sign-in unreadable"}[kind]
+        lead = headline.rstrip(".") + ": "
+        shown = sentence[len(lead):] if sentence.startswith(lead) else sentence  # do not say it twice
+        facts = f"<p><strong>{html.escape(headline)}</strong> {html.escape(shown)}</p>"
         if info is not None and info["signed_in"] and kind in ("ok", "unverified", "unreachable"):
             scopes = info.get("granted_scopes") or []
             listing = ("<ul>" + "".join(f"<li><code>{html.escape(s)}</code></li>" for s in scopes)
                        + "</ul>") if scopes else "<p>The server did not report the granted scopes.</p>"
-            state += (f"<h2>Granted access ({len(scopes)})</h2>{listing}")
-        body = (
-            "<!doctype html><html lang=en><meta charset=utf-8>"
-            "<meta name=viewport content='width=device-width, initial-scale=1'>"
-            "<title>EV Dashboard</title><style>"
-            ":root{color-scheme:light dark}body{font:16px/1.6 system-ui,sans-serif;"
-            "max-width:40rem;margin:2rem auto;padding:0 16px}"
-            "code{font-size:.9em}a.button{display:inline-block;padding:.5rem 1rem;"
-            "border:1px solid currentColor;border-radius:6px;text-decoration:none}"
-            "table{border-collapse:collapse}td{padding:.15rem .8rem .15rem 0}.muted{opacity:.7}"
-            "h3{margin:1.2rem 0 .3rem;font-size:1rem}"
-            "</style><h1>EV Dashboard</h1>" + state
-            + "<p><a class=button href=/auth/login>Sign in</a></p>"
-            + ("<p><a href=/trips>Trips</a></p>" if self.app.location else "")
-            + view.render(self.app.db_path, tz=self.app.tz) + "</html>").encode("utf-8")
+            facts += f"<h3>Granted access ({len(scopes)})</h3>{listing}"
+        banner = ""
+        if kind != "ok":
+            banner = (f'<div class="banner {pill_kind}"><div><strong>{html.escape(headline)}</strong>'
+                      f"<p>{html.escape(sentence)}</p></div>"
+                      "<a class=btn href=/auth/login>Sign in</a></div>")
+        # When something is wrong the banner carries the one prominent button; otherwise a quiet one.
+        sign_in = '<a class="btn ghost" href=/auth/login>Sign in again</a>' if kind == "ok" else ""
+        page = theme.shell(
+            "EV Dashboard",
+            banner + view.render(self.app.db_path, tz=self.app.tz)
+            + f'<details><summary>Sign-in and access</summary><div class="inner">{facts}</div></details>',
+            active="home", show_trips=self.app.location,
+            subtitle="A personal, read-only dashboard for your own vehicle",  # ui-text
+            right=theme.pill(pill_kind, pill_text) + sign_in)
+        body = page.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -215,13 +222,16 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(body)
 
     def _login_page(self):
-        body = ('<!doctype html><meta charset=utf-8><title>Sign in</title>'
-                '<form method=post action=/auth/login><button>Sign in</button></form>'
-                ).encode("utf-8")
+        body = theme.shell(
+            "Sign in",  # ui-text
+            '<div class="card"><p>You will be sent to Volvo to sign in and approve read access. '
+            "Tick the remember-me option there so the sign-in lasts longer.</p>"
+            '<form method=post action=/auth/login><button class=btn>Continue to Volvo</button></form></div>',
+            show_trips=False, heading="EV Dashboard", subtitle="Sign in").encode("utf-8")  # ui-text
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self._headers()
+        self._headers(styles=True)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
@@ -269,13 +279,14 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def _text(self, status, text, title=""):
-        body = (f"<!doctype html><meta charset=utf-8><title>{title or 'EV Dashboard'}</title>"
-                f"<p>{text}</p>" if title else text).encode("utf-8")
+        body = (theme.shell(title, f'<div class="card"><p>{text}</p></div>', show_trips=False,
+                            heading="EV Dashboard", subtitle=title)
+                if title else text).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "text/html; charset=utf-8" if title
                          else "text/plain; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self._headers()
+        self._headers(styles=bool(title))
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)

@@ -135,3 +135,7 @@ the empty string are rejected with a warning.
 rule when it is absent (a fresh clone, or CI), so the generic structural rules
 always run. Because CI has no local file, it cannot enforce your private
 vocabulary: run the check locally before pushing.
+
+## Interface text
+
+The quoted-phrase and free-text rules in `scripts/check_privacy.sh` flag capitalised quoted phrases, which also describes ordinary interface labels. A line of plain interface text may carry a trailing `# ui-text` comment to skip those two rules only. Every run prints each exempted line, and the semantic review reads them. Never use the marker for anything that came from real data.

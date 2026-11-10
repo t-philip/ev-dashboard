@@ -14,6 +14,8 @@ import json
 import math
 from typing import Sequence, Tuple
 
+from . import __version__
+
 WIDTH, HEIGHT, PAD = 640, 420, 40
 KM_PER_DEG_LAT = 110.574
 KM_PER_DEG_LON_EQUATOR = 111.320
@@ -179,7 +181,8 @@ def render_interactive(points: Sequence[Point], lines: Sequence[Line] = ()) -> s
     data_lines = json.dumps([[[round(a[0], 5), round(a[1], 5)], [round(b[0], 5), round(b[1], 5)]]
                              for a, b in segs])
     attr = lambda text: html.escape(text, quote=True)
-    return ('<link rel=stylesheet href="/static/leaflet.css">'
+    stamp = f"?v={__version__}"  # a new release is fetched afresh, not served from the browser's cache
+    return (f'<link rel=stylesheet href="/static/leaflet.css{stamp}">'
             f'<div class="evmap" data-points="{attr(data_points)}" data-lines="{attr(data_lines)}">'
             f'{fallback}</div>'
-            '<script src="/static/leaflet.js"></script><script src="/static/evmap.js"></script>')
+            f'<script src="/static/leaflet.js{stamp}"></script><script src="/static/evmap.js{stamp}"></script>')

@@ -231,7 +231,8 @@ class Live(unittest.TestCase):
         resp = self.get("/auth/done")
         self.assertEqual(resp.getheader("Referrer-Policy"), "no-referrer")
         self.assertEqual(resp.getheader("Cache-Control"), "no-store")
-        self.assertEqual(resp.getheader("Content-Security-Policy"), "default-src 'none'")
+        self.assertEqual(resp.getheader("Content-Security-Policy"),
+                         "default-src 'none'; style-src 'unsafe-inline'")  # styles only: no scripts
 
     def test_no_response_restricts_form_action(self):
         # Browsers apply form-action to the redirect that answers the sign-in form post, so a

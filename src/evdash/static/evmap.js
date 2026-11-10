@@ -15,8 +15,7 @@
   if (!all.length) { return; }
 
   box.textContent = "";
-  box.style.height = "420px";
-  box.style.maxWidth = "640px";
+  box.style.height = "440px";
   box.style.border = "1px solid currentColor";
   box.style.borderRadius = "6px";
   var map = L.map(box, { minZoom: 2, maxZoom: 17, attributionControl: true, worldCopyJump: false });

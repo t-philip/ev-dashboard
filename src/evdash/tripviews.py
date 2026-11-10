@@ -16,7 +16,7 @@ import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from . import mapview
+from . import mapview, theme
 from . import trips as trips_mod
 from .store import Store
 
@@ -27,10 +27,10 @@ STYLE = (
     ".muted{opacity:.7}nav a{margin-right:1rem}")
 _MONTH = re.compile(r"(\d{4})-(0[1-9]|1[0-2])")
 _TRIP_ID = re.compile(r"[0-9A-Za-z]{8,40}")
-OFF = "<p>Location is turned off, so there are no trips to show.</p>"
-EMPTY = ("<p>No trips yet. A trip appears once the car's position has been reported at least twice, "
+OFF = '<div class="card"><p>Location is turned off, so there are no trips to show.</p></div>'
+EMPTY = ("<div class='card'><p>No trips yet. A trip appears once the car's position has been reported at least twice, "
          "so location collection must be on and the location scope granted. History starts the day "
-         "collection starts.</p>")
+         "collection starts.</p></div>")
 MAP_NOTE = {False: "on a plain background",
             True: ("on an OpenStreetMap map (drag to move, scroll or use + and - to zoom; tiles are fetched by "
                    "this server, which the map service sees; your browser talks only to this server)")}
@@ -39,11 +39,14 @@ _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct",
 
 
 def shell(title: str, body: str) -> str:
-    return ("<!doctype html><html lang=en><meta charset=utf-8>"
-            "<meta name=viewport content='width=device-width, initial-scale=1'>"
-            f"<title>{html.escape(title)}</title><style>{STYLE}</style>"
-            "<nav><a href=/>Home</a><a href=/trips>Trips</a></nav>"
-            f"<h1>{html.escape(title)}</h1>{body}</html>")
+    return theme.shell(title, body, active="trips")
+
+
+def _tile(label: str, value: str, unit: str = "", note: str = "", small: bool = False) -> str:
+    unit_html = f'<span class="unit">{html.escape(unit)}</span>' if unit else ""
+    note_html = f'<div class="note">{html.escape(note)}</div>' if note else ""
+    return (f'<div class="tile"><div class="label">{html.escape(label)}</div>'
+            f'<div class="value{" small" if small else ""}">{html.escape(value)}{unit_html}</div>{note_html}</div>')
 
 
 def local(ts: str, tz: datetime.tzinfo) -> Optional[datetime.datetime]:
@@ -154,19 +157,28 @@ def render_list(db_path: Optional[Path], query: Dict[str, List[str]], tz: dateti
     for t in reversed(shown):
         rows.append(
             f"<tr><td><a href='/trips/{html.escape(t.id)}'>{html.escape(_when(t.end.ts, tz))}</a></td>"
-            f"<td>{html.escape(_km(t.distance_km))}</td>"
+            f"<td class=num>{html.escape(_km(t.distance_km))}</td>"
             f"<td>{html.escape(_coords(t.start.lat, t.start.lon, 3))}</td>"
             f"<td>{html.escape(_coords(t.end.lat, t.end.lon, 3))}</td>"
-            f"<td>{html.escape(_battery(t))}</td></tr>")
-    body = (
-        f"<p>{' '.join(nav)}</p>"
+            f"<td class=num>{html.escape(_battery(t))}</td></tr>")
+    month_tiles = (
         f"<p>{len(shown)} {'trip' if len(shown) == 1 else 'trips'}, {sum(known):.0f} km where the distance is known.</p>"
-        f"{mapview.render_interactive(points, lines) if tiles else mapview.render(points, lines)}"
-        f"<p class=muted>Stops drawn to scale {MAP_NOTE[tiles]}. Dashed lines join each trip's two "
-        "stops in a straight line: they are <strong>not</strong> the routes driven.</p>"
-        "<table><tr><th>Ended</th><th>Distance</th><th>From</th><th>To</th><th>Battery</th></tr>"
+        '<div class="tiles three">'
+        + _tile("Trips", str(len(shown)), note=month)
+        + _tile("Distance", f"{sum(known):.0f}", "km", "where the distance is known")
+        + _tile("Average trip", f"{sum(known) / len(known):.1f}" if known else "\u2014", "km" if known else "")  # ui-text
+        + "</div>")
+    body = (
+        f'<div class="chips">{" ".join(nav)}</div>'
+        f"{month_tiles}"
+        '<h2 class="sec">Map</h2>'
+        f'<div class="card">{mapview.render_interactive(points, lines) if tiles else mapview.render(points, lines)}'
+        f'<p class="muted">Stops drawn to scale {MAP_NOTE[tiles]}. Dashed lines join each trip\'s two '
+        "stops in a straight line: they are <strong>not</strong> the routes driven.</p></div>"
+        '<h2 class="sec">Trips</h2>'
+        "<table><tr><th>Ended</th><th class=num>Distance</th><th>From</th><th>To</th><th class=num>Battery</th></tr>"
         f"{''.join(rows)}</table>"
-        + (f"<p class=muted>Other months: {others}</p>" if others else ""))
+        + (f'<p class="muted">Other months: {others}</p>' if others else ""))
     return 200, shell("Trips", body)
 
 
@@ -194,8 +206,17 @@ def render_detail(db_path: Optional[Path], trip_id: str, tz: datetime.tzinfo,
         ("From", _coords(t.start.lat, t.start.lon, 4)),
         ("To", _coords(t.end.lat, t.end.lon, 4)),
     ]
-    table = "<table>" + "".join(
+    table = "<table class=kv>" + "".join(
         f"<tr><th>{html.escape(k)}</th><td>{html.escape(v)}</td></tr>" for k, v in rows) + "</table>"
+    summary = (
+        '<div class="tiles">'
+        + _tile("Distance", f"{t.distance_km:.1f}" if t.distance_km is not None else "\u2014",
+                "km" if t.distance_km is not None else "", "odometer")
+        + _tile("Time driving", duration.replace(" min", "") if duration != "not recorded" else "\u2014",  # ui-text
+                "min" if duration != "not recorded" else "")
+        + _tile("Battery", _battery(t), small=True)
+        + _tile("Straight line", f"{t.straight_km:.1f}", "km", "between the two stops")  # ui-text
+        + "</div>")
     pts = [(t.start.lat, t.start.lon, "Start: " + _when(t.start.ts, tz), "start"),
            (t.end.lat, t.end.lon, "End: " + _when(t.end.ts, tz), "end")]
     osm = lambda s: (f"https://www.openstreetmap.org/?mlat={s.lat:.5f}&amp;mlon={s.lon:.5f}"
@@ -208,13 +229,15 @@ def render_detail(db_path: Optional[Path], trip_id: str, tz: datetime.tzinfo,
     if pos < len(trips) - 1:
         nav.append(f"<a href='/trips/{html.escape(trips[pos + 1].id)}'>later trip &rarr;</a>")
     body = (
-        f"<p>{' '.join(nav)}</p>{table}"
-        f"{(mapview.render_interactive if tiles else mapview.render)(pts, [((t.start.lat, t.start.lon), (t.end.lat, t.end.lon))])}"
-        "<p class=muted>Hollow circle: start. Filled circle: end. The dashed line is a straight line "
+        f'<div class="chips">{" ".join(nav)}</div>{summary}'
+        '<h2 class="sec">Map</h2>'
+        f'<div class="card">{(mapview.render_interactive if tiles else mapview.render)(pts, [((t.start.lat, t.start.lon), (t.end.lat, t.end.lon))])}'
+        '<p class="muted">Hollow circle: start. Filled circle: end. The dashed line is a straight line '
         "between the two stops: it is <strong>not</strong> the route driven, which the manufacturer "
         "does not provide.</p>"
         f"<p>Show on a map: <a href='{osm(t.start)}' rel='noreferrer noopener'>start</a> &middot; "
         f"<a href='{osm(t.end)}' rel='noreferrer noopener'>end</a></p>"
-        "<p class=muted>Those links open openstreetmap.org in your browser, which then receives the "
-        "coordinates. Nothing is sent unless you click.</p>")
+        '<p class="muted">Those links open openstreetmap.org in your browser, which then receives the '
+        "coordinates. Nothing is sent unless you click.</p></div>"
+        f'<h2 class="sec">Details</h2>{table}')
     return 200, shell(f"Trip, {_when(t.end.ts, tz)}", body)

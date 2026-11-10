@@ -192,12 +192,21 @@ report FAIL "year on a line describing an absence" \
 #
 # Case-SENSITIVE on purpose, and therefore not run through report(), which
 # forces -i: with -i this matches ordinary phrases.
-hits=$(printf '%s\n' "$ADDED_DATA" | grep -nE '"[A-Z][a-z]+ [a-z]+( [A-Z]{2})?"' 2>/dev/null \
+# A line may opt out of this rule and the free-text rule with a trailing "# ui-text" comment: for plain interface
+# labels only. Every use is counted and printed below, so an exemption cannot pass unseen.
+UI_MARK='[[:space:]]# ui-text[[:space:]]*$'   # anchored: the text inside a string does not count
+exempt=$(printf '%s\n' "$ADDED_DATA" | grep -cE -e "$UI_MARK" || true)
+hits=$(printf '%s\n' "$ADDED_DATA" | grep -vE -e "$UI_MARK" | grep -nE '"[A-Z][a-z]+ [a-z]+( [A-Z]{2})?"' 2>/dev/null \
        | grep -viE 'e\.g\.|for example|SELECT|INSERT|UPDATE|CREATE|ALTER|PRAGMA|Content-Type|User-Agent' || true)
 if [ -n "$hits" ]; then
     printf '\n  [FAIL] quoted proper-noun phrase (verbatim log note?)\n'
     printf '%s\n' "$hits" | sed 's/^/      /' | head -20
     fail=1
+fi
+if [ "${exempt:-0}" -gt 0 ]; then
+    printf '\n  note: %s added line(s) carry "# ui-text" and skipped the quoted-phrase and free-text rules;\n' "$exempt"
+    printf '        they must be plain interface labels, never text copied from real data. Read them:\n'
+    printf '%s\n' "$ADDED_DATA" | grep -E -e "$UI_MARK" | sed 's/^+[[:space:]]*/        | /' | head -60
 fi
 
 # --- Per-repo additions -----------------------------------------------------
@@ -241,7 +250,7 @@ report FAIL "absolute date at or after 2002 (outside the fiction window)" \
 ADDED_ALL=$ADDED; ADDED=$ADDED_DATA
 report FAIL "free-text field with non-placeholder content" \
     '(notes|note|description|comment|label|title)\s*[=:]\s*"[^"]{4,}"' \
-    '"Test Data|placeholder|example|e\.g\.|lorem'
+    '"Test Data|placeholder|example|e\.g\.|lorem|[[:space:]]# ui-text[[:space:]]*$'
 ADDED=$ADDED_ALL
 
 # --- Verdict ----------------------------------------------------------------
