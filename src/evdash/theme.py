@@ -56,6 +56,9 @@ border-top:2px solid var(--rule);border-bottom:1px solid var(--rule)}
 .bar{position:relative;height:8px;background:var(--rule-soft);margin-top:8px;border:1px solid var(--rule)}
 .bar>i{position:absolute;inset:0 auto 0 0;display:block}
 .bar>b{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--ink)}
+.vehicle{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 18px;padding:14px 18px;margin:0 0 4px;background:var(--surface);border-top:2px solid var(--rule);border-bottom:1px solid var(--rule)}
+.vname{font-size:1.4rem;font-weight:900}.facts{color:var(--ink-2);font-size:.92rem}
+.vvin{margin-left:auto;font-family:ui-monospace,Consolas,monospace;font-size:.85rem;color:var(--ink-3);letter-spacing:.04em}
 .fresh{margin:22px 0 0;color:var(--ink-2);font-size:.88rem}
 .fresh .stale{color:var(--warn);font-weight:700}
 details{margin-top:22px;border:1px solid var(--rule);background:var(--surface)}

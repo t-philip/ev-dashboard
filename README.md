@@ -67,6 +67,8 @@ Run `serve` and `collect` as two services sharing one database. Settings are env
 | `EVDASH_TILE_URL` | Tile address with `{z}`, `{x}` and `{y}` (default: the OpenStreetMap standard tile server; follow its tile usage policy) |
 | `EVDASH_TIMEZONE` | Time zone name for the times on the trips pages (default `UTC`; needs the system's time zone data for any other) |
 
+**Vehicle card.** The overview opens with which car it is (model, year, colour, drive, power, battery size, seats), read once a day from the vehicle API. The identification number is shown only in part: the check digit and the six-digit serial number are hidden, so what is shown is shared by every car of that model, year and plant.
+
 Credentials are read from files, never from environment values: `client_id`, `client_secret` and
 `vcc_api_key`, either in the directory named by `CREDENTIALS_DIRECTORY` or at the paths in
 `EVDASH_CLIENT_ID_FILE`, `EVDASH_CLIENT_SECRET_FILE` and `EVDASH_VCC_API_KEY_FILE`. On POSIX systems the

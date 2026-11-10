@@ -58,6 +58,7 @@ class Group:
     interval: float    # seconds between polls
     parser: Callable[[str, dict], list]
     location: bool = False
+    details: bool = False  # descriptive facts, kept as one small record instead of as readings
 
 
 _CV = "/connected-vehicle/v2/vehicles/{vin}/"
@@ -74,6 +75,8 @@ GROUPS: Tuple[Group, ...] = (
     Group("brakes", "connected", _CV + "brakes", 21600, parse.parse_connected),
     Group("location", "location", "/location/v1/vehicles/{vin}/location", 900,
           parse.parse_location, location=True),
+    Group("vehicle", "connected", "/connected-vehicle/v2/vehicles/{vin}", 86400,
+          lambda name, payload: [], details=True),
 )
 
 
@@ -377,7 +380,16 @@ class Collector:
         status, headers = None, {}
         try:
             status, payload, headers = self._request_negotiating(group.api, group.path.format(vin=vin))
-            if status == 200:
+            if status == 200 and group.details:
+                info = parse.parse_vehicle(payload)
+                if info:
+                    self._store.set_meta("vehicle_info", json.dumps(info, sort_keys=True))
+                    log.info("poll %s ok: %d details", group.name, len(info))
+                else:
+                    log.warning("poll %s returned 200 but no usable details", group.name)
+                self._store.set_state(vin, group.name, now + group.interval, 0, 200, _iso(now))
+                return
+            elif status == 200:
                 readings = group.parser(group.name, payload)
                 aged = 0
                 if group.location:

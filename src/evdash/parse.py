@@ -120,3 +120,40 @@ def parse_vehicle_list(payload: dict) -> List[str]:
         return []
     vins = [item.get("vin") for item in data if isinstance(item, dict)]
     return [v for v in vins if isinstance(v, str) and re.fullmatch(r"[A-HJ-NPR-Z0-9]{17}", v)]
+
+
+_PLAIN_TEXT = re.compile(r"[A-Za-z0-9][A-Za-z0-9 .+/\-]{0,39}")
+
+
+def parse_vehicle(payload: dict) -> dict:
+    """The few descriptive facts about the vehicle that are safe to show: what it is, not who owns it.
+
+    Only a fixed list of fields is read, and each must look like a short plain value. The vehicle
+    identification number, picture links and the registration date are never taken from the reply.
+    """
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return {}
+    descriptions = data.get("descriptions") if isinstance(data.get("descriptions"), dict) else {}
+    specs = data.get("specifications") if isinstance(data.get("specifications"), dict) else {}
+
+    def text(value):
+        return value.strip() if isinstance(value, str) and _PLAIN_TEXT.fullmatch(value.strip()) else None
+
+    def number(value, low, high):
+        ok = isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        return value if ok and low <= value <= high else None
+
+    found = {
+        "model": text(descriptions.get("model")),
+        "steering": text(descriptions.get("steering")),
+        "colour": text(data.get("externalColour")),
+        "fuel": text(data.get("fuelType")),
+        "gearbox": text(data.get("gearbox")),
+        "drive": text(specs.get("driveType")),
+        "year": number(data.get("modelYear"), 1990, 2100),
+        "power_kw": number(specs.get("enginePowerKw"), 1, 2000),
+        "battery_kwh": number(data.get("batteryCapacityKWH"), 1, 500),
+        "seats": number(specs.get("numberOfSeats"), 1, 20),
+    }
+    return {key: value for key, value in found.items() if value is not None}

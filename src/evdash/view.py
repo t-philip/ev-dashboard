@@ -1,12 +1,14 @@
 """The current-state section of the home page: the latest value of every field, and its age.
 
 Reads the database read-only. Location is deliberately not shown here: it is an opt-in
-feature with its own phase. The vehicle identification number is never shown.
+feature with its own phase. The vehicle identification number is shown only in part (see
+``masked_vin``): the check digit and the serial number are always hidden.
 """
 from __future__ import annotations
 
 import datetime
 import html
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -87,6 +89,11 @@ def render(db_path: Optional[Path], now: Optional[datetime.datetime] = None,
         vins = db.vehicles()
         rows = [r for r in db.latest(vins[0]) if not r.field.startswith("location.")] if vins else []
         polled = db.last_poll(vins[0]) if vins else None
+        try:
+            info = json.loads(db.get_meta("vehicle_info") or "null")
+        except ValueError:
+            info = None
+        vehicle = (info if isinstance(info, dict) else {}, vins[0]) if vins else None
     except sqlite3.Error:
         return NO_DATA
     finally:
@@ -97,7 +104,7 @@ def render(db_path: Optional[Path], now: Optional[datetime.datetime] = None,
     if polled is None or _parse(polled) is None:  # no usable poll record: the newest stored value stands in
         stored = max((_parse(r.fetched_at) for r in rows if _parse(r.fetched_at)), default=None)
         polled = stored.isoformat() if stored else None
-    return dashboard(rows, polled, now, tz)
+    return dashboard(rows, polled, now, tz, vehicle)
 
 
 # -- the dashboard: what matters first, the raw readings last ------------------------------------
@@ -120,6 +127,14 @@ def _number(value, places: int = 0) -> str:
     except (TypeError, ValueError):
         return html.escape(str(value))
     return f"{number:,.{places}f}".replace(",", " ")
+
+
+def _compact(value) -> str:
+    """69.0 -> 69, 64.8 -> 64.8."""
+    try:
+        return _number(value, 0 if float(value).is_integer() else 1)
+    except (TypeError, ValueError):
+        return html.escape(str(value))
 
 
 def _tile(label: str, value: str, unit: str = "", note: str = "", kind: str = "", extra: str = "",
@@ -182,10 +197,50 @@ def _numeric_tile(latest: dict, key: str, label: str, unit: str, places: int = 0
     return _tile(label, _number(value, places), unit, note)
 
 
-def dashboard(rows, polled: Optional[str], now: datetime.datetime, tz: datetime.tzinfo) -> str:
+def masked_vin(vin) -> str:
+    """The part of a vehicle identification number that only says what kind of car it is.
+
+    A VIN is 17 characters: the first three name the maker, 4-8 the model and build, the 9th is a
+    check digit, the 10th the model year, the 11th the plant and the last six are the car's own
+    serial number. The check digit and the serial number are what single out one car, so only
+    those seven are hidden: what is shown is shared by every car of that model, year and plant.
+    """
+    if not isinstance(vin, str) or len(vin) != 17:
+        return ""
+    return vin[:8] + "•" + vin[9:11] + "•" * 6
+
+
+def vehicle_card(info: dict, vin) -> str:
+    """Which car this is: model, year, colour, drive and size, and the masked VIN."""
+    facts = []
+    if "year" in info:
+        facts.append(str(int(info["year"])))
+    for key in ("colour", "drive"):
+        if key in info:
+            facts.append(str(info[key]))
+    if "power_kw" in info:
+        facts.append(f"{_compact(info['power_kw'])} kW")
+    if "battery_kwh" in info:
+        facts.append(f"{_compact(info['battery_kwh'])} kWh battery")
+    if "seats" in info:
+        facts.append(f"{_number(info['seats'])} seats")
+    shown = masked_vin(vin)
+    if not info and not shown:
+        return ""
+    name = html.escape(f"Volvo {info['model']}" if "model" in info else "Vehicle")
+    vin_html = f'<span class="vvin" title="Identification number, partly hidden">VIN {html.escape(shown)}</span>' if shown else ""  # ui-text
+    sub = html.escape(" · ".join(facts))
+    return (f'<div class="vehicle"><span class="vname">{name}</span>'
+            f'<span class="facts">{sub}</span>{vin_html}</div>')
+
+
+def dashboard(rows, polled: Optional[str], now: datetime.datetime, tz: datetime.tzinfo,
+              vehicle=None) -> str:
     rows = [r for r in rows if not r.field.startswith("location.")]  # positions never appear on this page
     latest = {r.field: r for r in rows}
     out = []
+    if vehicle is not None:
+        out.append(vehicle_card(*vehicle))
     # The manufacturer stamps this one field with the time of each request, not of the car's report,
     # so it would make a parked car look freshly heard from on every poll.
     reported = max((r.source_ts for r in rows
