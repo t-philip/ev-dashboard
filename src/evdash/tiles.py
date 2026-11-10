@@ -30,7 +30,7 @@ MIN_ZOOM, MAX_ZOOM = 2, 17
 MAX_TILE_BYTES = 300_000
 CACHE_DAYS = 30
 MAX_CACHE_BYTES = 200_000_000
-MAX_FETCHES_PER_MINUTE = 60
+MAX_FETCHES_PER_MINUTE = 150  # panning and zooming ask for a screenful of tiles at a time
 _PNG = b"\x89PNG\r\n\x1a\n"
 
 

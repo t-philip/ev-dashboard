@@ -23,6 +23,9 @@ from . import auth, store, tiles, tripviews, view
 log = logging.getLogger("evdash.server")
 
 _QUERY = re.compile(r"\?[^\s'\"]*")
+_STATIC = {"leaflet.js": ("text/javascript; charset=utf-8", "leaflet.js"),
+           "leaflet.css": ("text/css; charset=utf-8", "leaflet.css"),
+           "evmap.js": ("text/javascript; charset=utf-8", "evmap.js")}
 _TILE_PATH = re.compile(r"/tiles/(\d{1,2})/(\d{1,8})/(\d{1,8})\.png")
 
 _PAGES = {
@@ -83,6 +86,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._trips(parts)
         elif parts.path.startswith("/tiles/"):
             self._tile(parts.path)
+        elif parts.path.startswith("/static/"):
+            self._static(parts.path)
         elif parts.path in _PAGES:
             title, text = _PAGES[parts.path]
             self._text(200, text, title=title)
@@ -178,6 +183,27 @@ class _Handler(BaseHTTPRequestHandler):
         if self.command != "HEAD":
             self.wfile.write(data)
 
+    def _static(self, path):
+        """The bundled map script and style: only a fixed list of names, only when the map is on."""
+        entry = _STATIC.get(path[len("/static/"):])
+        if not (self.app.tiles and self.app.location) or entry is None:
+            return self._text(404, "Page not found")
+        content_type, name = entry
+        try:
+            data = (Path(__file__).parent / "static" / name).read_bytes()
+        except OSError:
+            return self._text(404, "Page not found")
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Cache-Control", "private, max-age=86400")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Content-Security-Policy", "default-src 'none'")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
     def _html(self, status, page):
         body = page.encode("utf-8")
         self.send_response(status)
@@ -226,9 +252,9 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         if styles:  # inline styles only; still no scripts and nothing fetched from elsewhere
             # Map tiles, when enabled, come from this server's own address and nowhere else.
-            img = "; img-src 'self'" if self.app.tiles else ""
-            self.send_header("Content-Security-Policy",
-                             "default-src 'none'; style-src 'unsafe-inline'" + img)
+            maps = "; img-src 'self'; script-src 'self'" if self.app.tiles else ""
+            styles = "'unsafe-inline' 'self'" if self.app.tiles else "'unsafe-inline'"
+            self.send_header("Content-Security-Policy", f"default-src 'none'; style-src {styles}" + maps)
             return
         # Deliberately no form-action directive: browsers apply it to the redirect that answers
         # the sign-in form post, and a restrictive value silently blocks the hand-off to the

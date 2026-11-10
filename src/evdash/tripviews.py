@@ -32,7 +32,8 @@ EMPTY = ("<p>No trips yet. A trip appears once the car's position has been repor
          "so location collection must be on and the location scope granted. History starts the day "
          "collection starts.</p>")
 MAP_NOTE = {False: "on a plain background",
-            True: "on an OpenStreetMap map (tiles are fetched by this server, which the map service sees; your browser talks only to this server)"}
+            True: ("on an OpenStreetMap map (drag to move, scroll or use + and - to zoom; tiles are fetched by "
+                   "this server, which the map service sees; your browser talks only to this server)")}
 _DAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 _MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
@@ -160,7 +161,7 @@ def render_list(db_path: Optional[Path], query: Dict[str, List[str]], tz: dateti
     body = (
         f"<p>{' '.join(nav)}</p>"
         f"<p>{len(shown)} {'trip' if len(shown) == 1 else 'trips'}, {sum(known):.0f} km where the distance is known.</p>"
-        f"{mapview.render(points, lines, tiles=tiles)}"
+        f"{mapview.render_interactive(points, lines) if tiles else mapview.render(points, lines)}"
         f"<p class=muted>Stops drawn to scale {MAP_NOTE[tiles]}. Dashed lines join each trip's two "
         "stops in a straight line: they are <strong>not</strong> the routes driven.</p>"
         "<table><tr><th>Ended</th><th>Distance</th><th>From</th><th>To</th><th>Battery</th></tr>"
@@ -208,7 +209,7 @@ def render_detail(db_path: Optional[Path], trip_id: str, tz: datetime.tzinfo,
         nav.append(f"<a href='/trips/{html.escape(trips[pos + 1].id)}'>later trip &rarr;</a>")
     body = (
         f"<p>{' '.join(nav)}</p>{table}"
-        f"{mapview.render(pts, [((t.start.lat, t.start.lon), (t.end.lat, t.end.lon))], tiles=tiles)}"
+        f"{(mapview.render_interactive if tiles else mapview.render)(pts, [((t.start.lat, t.start.lon), (t.end.lat, t.end.lon))])}"
         "<p class=muted>Hollow circle: start. Filled circle: end. The dashed line is a straight line "
         "between the two stops: it is <strong>not</strong> the route driven, which the manufacturer "
         "does not provide.</p>"

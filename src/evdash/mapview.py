@@ -10,6 +10,7 @@ as straight lines, never as routes.
 from __future__ import annotations
 
 import html
+import json
 import math
 from typing import Sequence, Tuple
 
@@ -160,3 +161,25 @@ def _render_tiles(pts, segs, coords) -> str:
                'fill="#0645ad">&#169; OpenStreetMap contributors</text></a>')
     out.append("</svg>")
     return "".join(out)
+
+
+def render_interactive(points: Sequence[Point], lines: Sequence[Line] = ()) -> str:
+    """The map the owner can pan and zoom (opt-in, with tiles).
+
+    The static tile map is kept inside the container as the fallback: a script replaces it only when
+    scripts run and the bundled library loaded. The points travel as plain data in attributes, so the
+    pages still need no inline script. Scripts and styles come from this server's own /static/ route.
+    """
+    pts = [p for p in points if _valid(p[0], p[1])]
+    segs = [l for l in lines if _valid(*l[0]) and _valid(*l[1])]
+    fallback = render(points, lines, tiles=True)
+    if not pts and not segs:
+        return fallback
+    data_points = json.dumps([[round(p[0], 5), round(p[1], 5), str(p[2]), str(p[3])] for p in pts])
+    data_lines = json.dumps([[[round(a[0], 5), round(a[1], 5)], [round(b[0], 5), round(b[1], 5)]]
+                             for a, b in segs])
+    attr = lambda text: html.escape(text, quote=True)
+    return ('<link rel=stylesheet href="/static/leaflet.css">'
+            f'<div class="evmap" data-points="{attr(data_points)}" data-lines="{attr(data_lines)}">'
+            f'{fallback}</div>'
+            '<script src="/static/leaflet.js"></script><script src="/static/evmap.js"></script>')
