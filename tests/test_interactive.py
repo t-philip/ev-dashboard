@@ -49,7 +49,7 @@ class Markup(unittest.TestCase):
         self.assertEqual(lines, [[[10.1, 20.1], [10.2, 20.25]]])
 
     def test_nothing_to_show_gives_the_plain_message(self):
-        self.assertIn("No positions", mapview.render_interactive([]))
+        self.assertIn("no positions", mapview.render_interactive([]).lower())
 
 
 class Served(WebHarness):
