@@ -78,6 +78,14 @@ class Config(unittest.TestCase):
         self.assertEqual(s.oauth.client_secret, SECRET)
         self.assertEqual(s.listen_port, 8100)
 
+    def test_default_sign_in_addresses_are_the_current_service(self):
+        with tempfile.TemporaryDirectory() as d:
+            s = config.load(self.env(d))
+        self.assertEqual(s.oauth.authorize_url, config.DEFAULT_AUTHORIZE_URL)
+        self.assertEqual(s.oauth.token_url, config.DEFAULT_TOKEN_URL)
+        for url in (s.oauth.authorize_url, s.oauth.token_url):
+            self.assertTrue(url.startswith("https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/"))
+
     def test_secret_in_environment_value_is_not_accepted(self):
         with tempfile.TemporaryDirectory() as d:
             env = self.env(d)

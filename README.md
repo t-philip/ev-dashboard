@@ -56,6 +56,7 @@ Run `serve` and `collect` as two services sharing one database. Settings are env
 |---|---|
 | `EVDASH_REDIRECT_URI` | Your HTTPS redirect address, registered with the manufacturer (required) |
 | `EVDASH_SCOPES` | The read scopes to request, space-separated (required) |
+| `EVDASH_AUTHORIZE_URL` / `EVDASH_TOKEN_URL` | The manufacturer's sign-in and token addresses. The defaults are the current Volvo ID service. An application registered with the manufacturer's older sign-in service needs these set to that service's addresses |
 | `EVDASH_LISTEN` | `host:port` for the web page (default `127.0.0.1:8100`) |
 | `EVDASH_TOKEN_FILE` / `EVDASH_DB` | Where the sign-in tokens and the readings are stored (default under `data/`) |
 | `EVDASH_DAILY_BUDGET` | Most requests per UTC day (default 2000; the cap of 9000 is a safety margin under the manufacturer's documented default limit of 10,000 per API per day) |

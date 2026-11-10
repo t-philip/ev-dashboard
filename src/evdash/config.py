@@ -16,8 +16,8 @@ from typing import Mapping, Optional, Tuple
 from .auth import OAuthConfig
 from .collector import DEFAULT_BASE, DEFAULT_BUDGET, MAX_BUDGET
 
-DEFAULT_AUTHORIZE_URL = "https://volvoid.eu.volvocars.com/as/authorization.oauth2"
-DEFAULT_TOKEN_URL = "https://volvoid.eu.volvocars.com/as/token.oauth2"
+DEFAULT_AUTHORIZE_URL = "https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/auth"
+DEFAULT_TOKEN_URL = "https://auth.volvocars.com/realms/volvocars/protocol/openid-connect/token"
 
 
 class ConfigError(Exception):
