@@ -87,6 +87,13 @@ class Tiles(unittest.TestCase):
         self.assertIn("while it is parked the values stay as last reported", out)
         self.assertNotIn("while it is parked", page([row("odometer.odometer", 100, "km")]))
 
+    def test_a_field_stamped_with_the_request_time_does_not_hide_a_stale_car(self):
+        rows = [row("odometer.odometer", 100, "km", OLD),
+                row("statistics.averageEnergyConsumptionAutomatic", 24.1, "kWh/100km", WHEN)]
+        out = page(rows, polled=WHEN)
+        self.assertIn("Newest report from the car Mon 01 Mar 11:00 UTC", out)
+        self.assertIn("while it is parked the values stay as last reported", out)
+
     def test_the_raw_readings_stay_available_but_collapsed(self):
         out = page(good())
         self.assertIn("<details><summary>All readings (", out)

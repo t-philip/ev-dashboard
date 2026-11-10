@@ -186,7 +186,11 @@ def dashboard(rows, polled: Optional[str], now: datetime.datetime, tz: datetime.
     rows = [r for r in rows if not r.field.startswith("location.")]  # positions never appear on this page
     latest = {r.field: r for r in rows}
     out = []
-    reported = max((r.source_ts for r in rows if _parse(r.source_ts)), key=_parse, default=None)
+    # The manufacturer stamps this one field with the time of each request, not of the car's report,
+    # so it would make a parked car look freshly heard from on every poll.
+    reported = max((r.source_ts for r in rows
+                    if _parse(r.source_ts) and r.field != "statistics.averageEnergyConsumptionAutomatic"),
+                   key=_parse, default=None)
     fresh = []
     if polled:
         fresh.append(f"Last poll {html.escape(when_text(polled, now, tz))} ({html.escape(age_text(polled, now))}).")
