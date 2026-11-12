@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Structural half of the public-repo privacy rule (see docs/PRIVACY.md).
+# privacy-check 1.0.0 -- the canonical copy lives in the `privacy-check/` folder of the scripts repo;
+# every other repo carries a copy of it (see privacy-check/README.md), kept in step by sync.sh.
 #
 # WHAT THIS IS FOR
 # This repo documents its own design in comments, and the evidence behind those
@@ -39,10 +41,36 @@ cd "$(git rev-parse --show-toplevel)"
 
 MODE="${1:---push}"
 fail=0
+VERSION="1.0.0"
+
+# Two years describe the author's own data, so they are settings, not constants. A tracked, optional
+# file `.privacy-config` in the repo root may set them, one KEY=VALUE per line:
+#   fiction_before=2002   test data may use only years BEFORE this one (the "fiction window")
+#   real_data_from=2020   the first year any real data source of yours covers; a bare date from this
+#                         year on, sitting in prose, reads as a dated observation
+# Choose fiction_before earlier than every real data source you have: then a date inside the window
+# provably records nothing. Only a four-digit year from 1900 to 2099 is accepted; anything else keeps the
+# default.
+FICTION_BEFORE=2002
+REAL_DATA_FROM=2020
+if [ -f .privacy-config ]; then
+    while IFS= read -r cfg_line || [ -n "$cfg_line" ]; do
+        cfg_line="${cfg_line%$'\r'}"
+        case "$cfg_line" in
+            fiction_before=19[0-9][0-9]|fiction_before=20[0-9][0-9]) FICTION_BEFORE="${cfg_line#*=}" ;;
+            real_data_from=19[0-9][0-9]|real_data_from=20[0-9][0-9]) REAL_DATA_FROM="${cfg_line#*=}" ;;
+        esac
+    done < .privacy-config
+fi
+# Alternations of years, generated from the two settings (to 2099).
+FICTION_OUTSIDE=$(seq -s"|" "$FICTION_BEFORE" 2099)
+REAL_YEARS=$(seq -s"|" "$REAL_DATA_FROM" 2099)
 
 # This file necessarily contains every pattern it searches for, so it would
 # always flag itself. Reviewed as code, not scanned as prose.
 SELF_EXCLUDE=':(exclude)scripts/check_privacy.sh'
+SELF_EXCLUDE2=':(exclude)privacy-check/check_privacy.sh'  # the canonical copy's own location
+SELF_EXCLUDE3=':(exclude)privacy-check/test.sh'  # its test cases are deliberate bad examples of every rule
 # LICENSE is the unmodified upstream AGPL text (its "November 2007" and quoted defined terms are
 # not author-written content); it is excluded from the scan like this script itself.
 
@@ -51,7 +79,7 @@ compute_added() {  # compute_added [extra pathspec excludes...] -> prints added 
     case "$MODE" in
     --all)    ADDED=$(git ls-files -- '*.py' '*.md' '*.js' '*.html' '*.yml' '*.json' '*.sh' '*.css' "${EXTRA[@]+"${EXTRA[@]}"}" \
                       | grep -v '\.min\.' | xargs -r grep -Hn '' 2>/dev/null) ;;
-    --staged) ADDED=$(git diff --cached -U0 -- . "$SELF_EXCLUDE" ':(exclude)LICENSE' "${EXTRA[@]+"${EXTRA[@]}"}" | grep '^+' | grep -v '^+++') ;;
+    --staged) ADDED=$(git diff --cached -U0 -- . "$SELF_EXCLUDE" "$SELF_EXCLUDE2" "$SELF_EXCLUDE3" ':(exclude)LICENSE' "${EXTRA[@]+"${EXTRA[@]}"}" | grep '^+' | grep -v '^+++') ;;
     *)        # PRIVACY_BASE lets CI name the range it wants checked; locally
               # we compare against the published branch plus the working tree.
               if [ -n "${PRIVACY_BASE:-}" ]; then
@@ -60,9 +88,9 @@ compute_added() {  # compute_added [extra pathspec excludes...] -> prints added 
                   git fetch -q origin 2>/dev/null || true
                   base=$(git rev-parse --verify -q origin/main || git rev-parse HEAD)
               fi
-              ADDED=$(git diff -U0 "$base"...HEAD -- . "$SELF_EXCLUDE" ':(exclude)LICENSE' "${EXTRA[@]+"${EXTRA[@]}"}" 2>/dev/null | grep '^+' | grep -v '^+++'
-                      git diff -U0 -- . "$SELF_EXCLUDE" ':(exclude)LICENSE' "${EXTRA[@]+"${EXTRA[@]}"}" | grep '^+' | grep -v '^+++'
-                      git diff --cached -U0 -- . "$SELF_EXCLUDE" ':(exclude)LICENSE' "${EXTRA[@]+"${EXTRA[@]}"}" | grep '^+' | grep -v '^+++') ;;
+              ADDED=$(git diff -U0 "$base"...HEAD -- . "$SELF_EXCLUDE" "$SELF_EXCLUDE2" "$SELF_EXCLUDE3" ':(exclude)LICENSE' "${EXTRA[@]+"${EXTRA[@]}"}" 2>/dev/null | grep '^+' | grep -v '^+++'
+                      git diff -U0 -- . "$SELF_EXCLUDE" "$SELF_EXCLUDE2" "$SELF_EXCLUDE3" ':(exclude)LICENSE' "${EXTRA[@]+"${EXTRA[@]}"}" | grep '^+' | grep -v '^+++'
+                      git diff --cached -U0 -- . "$SELF_EXCLUDE" "$SELF_EXCLUDE2" "$SELF_EXCLUDE3" ':(exclude)LICENSE' "${EXTRA[@]+"${EXTRA[@]}"}" | grep '^+' | grep -v '^+++') ;;
     esac
     printf '%s\n' "$ADDED"
 }
@@ -83,7 +111,7 @@ report() {  # report <severity> <label> <pattern> [inverse-filter]
     return 0
 }
 
-echo "privacy check — $MODE"
+echo "privacy check $VERSION — $MODE (fiction window before $FICTION_BEFORE)"
 
 # --- Identity and infrastructure -------------------------------------------
 # A denylist, and treated as one: cheap, exact, zero false positives, and
@@ -170,7 +198,7 @@ report FAIL "email addresses" \
 # ("YYYY-MM-DD"). So: flag bare dates, leave quoted ones to the advisory
 # rule below.
 report FAIL "bare date in prose (a dated observation, not behaviour)" \
-    '(^|[^"'"'"'0-9-])20(2[3-9]|[3-9][0-9])-[0-9]{2}-[0-9]{2}' \
+    "(^|[^\"'0-9-])($REAL_YEARS)-[0-9]{2}-[0-9]{2}" \
     '__nomatch__'
 
 report FAIL "month-year in prose" \
@@ -225,8 +253,8 @@ if [ -f "$DENYLIST_FILE" ]; then
 fi
 
 # --- The fiction window -----------------------------------------------------
-# Test data uses a year before 2002 and nothing else. Real data sources start
-# well after 2001, so a date inside the window provably is not a record of
+# Test data uses a year before `fiction_before` (2002 by default) and nothing else. Real data
+# sources start well after that year, so a date inside the window provably is not a record of
 # anything, and a date outside it in quoted data is a hard signal rather than
 # a guess.
 #
@@ -241,8 +269,8 @@ fi
 # Relative dates are untouched and should stay relative: a fixture built from
 # `_START + timedelta(...)`, or logic that works from "today", carries no
 # calendar fact to leak and pinning it would break the test.
-report FAIL "absolute date at or after 2002 (outside the fiction window)" \
-    '"(200[2-9]|20[1-9][0-9])-[0-9]{2}-[0-9]{2}'
+report FAIL "absolute date at or after $FICTION_BEFORE (outside the fiction window)" \
+    "\"($FICTION_OUTSIDE)-[0-9]{2}-[0-9]{2}"
 
 # Free-text fields are where a verbatim note from a real database ends up --
 # a trip note, a device label, a description. Default them to a
@@ -257,7 +285,7 @@ ADDED=$ADDED_ALL
 echo
 if [ "$fail" -ne 0 ]; then
     cat <<'EOF'
-FAIL — see docs/PRIVACY.md.
+FAIL — see docs/PRIVACY.md (or privacy-check/README.md).
 
 Fix by generalising, not by deleting: say what the code does and why, in
 terms a reader with no knowledge of the author's home could have written.
