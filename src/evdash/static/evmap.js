@@ -33,7 +33,7 @@
     return el;
   }
   lines.forEach(function (l) {
-    L.polyline([l[0], l[1]], { color: "#b3261e", weight: 2.5, dashArray: "7 5" }).addTo(map);
+    L.polyline([l[0], l[1]], { color: "#7b2cbf", weight: 4.5, dashArray: "7 5" }).addTo(map);
   });
   points.forEach(function (p) {
     var kind = p[3];

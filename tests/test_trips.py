@@ -159,6 +159,18 @@ class Pages(unittest.TestCase):
         self.fill(trip_rows=False)
         self.assertIn("No trips yet", tripviews.render_list(self.path, {}, UTC)[1])
 
+    def test_the_list_groups_trips_by_week_and_older_months_by_year(self):
+        self.fill()
+        _, page = tripviews.render_list(self.path, {}, UTC)
+        self.assertIn("<tr class=week>", page)
+        self.assertIn("Week ", page)
+        index = tripviews._month_index(["1998-12", "1999-01", "1999-03"], "1999-03")
+        self.assertIn("<details open><summary>1999 (2 months)</summary>", index)
+        self.assertIn("<details><summary>1998 (1 month)</summary>", index)
+        self.assertIn("<strong>1999-03</strong>", index)
+        self.assertLess(index.index("1999"), index.index("1998"))   # newest year first
+        self.assertNotIn("#b3261e", page)   # the route colour must not be the motorway red
+
     def test_the_list_shows_trips_newest_first_with_a_map_and_the_straight_line_warning(self):
         self.fill()
         status, page = tripviews.render_list(self.path, {}, UTC)

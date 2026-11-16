@@ -86,6 +86,37 @@ def _month_of(trip: trips_mod.Trip, tz) -> str:
     return when.strftime("%Y-%m") if when else ""
 
 
+def _week_key(when: datetime.datetime) -> Tuple[int, int]:
+    iso = when.isocalendar()
+    return iso[0], iso[1]
+
+
+def _week_label(when: datetime.datetime) -> str:
+    """"Week 46: 10 Nov to 16 Nov" for the ISO week (Monday to Sunday) holding *when*."""
+    monday = (when - datetime.timedelta(days=when.weekday())).date()
+    sunday = monday + datetime.timedelta(days=6)
+    return (f"Week {_week_key(when)[1]}: {monday.day} {_MONTHS[monday.month - 1]} "
+            f"to {sunday.day} {_MONTHS[sunday.month - 1]}")
+
+
+def _month_index(months: List[str], current: str) -> str:
+    """Every month with trips, grouped by year, newest first. Only the year being viewed is open,
+    so a long history stays short on the page."""
+    by_year: Dict[str, List[str]] = {}
+    for m in reversed(months):
+        by_year.setdefault(m[:4], []).append(m)
+    if len(by_year) < 2 and len(months) < 2:
+        return ""
+    parts = []
+    for year, items in by_year.items():
+        links = " ".join(
+            f"<strong>{m}</strong>" if m == current else f"<a href='/trips?month={m}'>{m}</a>" for m in items)
+        opened = " open" if year == current[:4] else ""
+        parts.append(f"<details{opened}><summary>{year} ({len(items)} "
+                     f"{'month' if len(items) == 1 else 'months'})</summary><div class='inner'>{links}</div></details>")
+    return '<h2 class="sec">All months</h2>' + "".join(parts)
+
+
 _CACHE: Dict[str, object] = {"key": None, "value": None}
 _LOCK = threading.Lock()
 
@@ -141,7 +172,7 @@ def render_list(db_path: Optional[Path], query: Dict[str, List[str]], tz: dateti
     nav.append(f"<strong>{month}</strong>")
     if idx < len(months) - 1:
         nav.append(f"<a href='/trips?month={months[idx + 1]}'>{months[idx + 1]} &rarr;</a>")
-    others = " ".join(f"<a href='/trips?month={m}'>{m}</a>" for m in reversed(months[-24:]) if m != month)
+    others = _month_index(months, month)
 
     known = [t.distance_km for t in shown if t.distance_km is not None]
     points: List[mapview.Point] = []
@@ -154,7 +185,12 @@ def render_list(db_path: Optional[Path], query: Dict[str, List[str]], tz: dateti
                 points.append((stop.lat, stop.lon, _when(stop.ts, tz), "stop"))
         lines.append(((t.start.lat, t.start.lon), (t.end.lat, t.end.lon)))
     rows = []
+    week = None
     for t in reversed(shown):
+        ended = local(t.end.ts, tz)
+        if ended is not None and _week_key(ended) != week:
+            week = _week_key(ended)
+            rows.append(f"<tr class=week><th colspan=5>{html.escape(_week_label(ended))}</th></tr>")
         rows.append(
             f"<tr><td><a href='/trips/{html.escape(t.id)}'>{html.escape(_when(t.end.ts, tz))}</a></td>"
             f"<td class=num>{html.escape(_km(t.distance_km))}</td>"
@@ -178,7 +214,7 @@ def render_list(db_path: Optional[Path], query: Dict[str, List[str]], tz: dateti
         '<h2 class="sec">Trips</h2>'
         "<table><tr><th>Ended</th><th class=num>Distance</th><th>From</th><th>To</th><th class=num>Battery</th></tr>"
         f"{''.join(rows)}</table>"
-        + (f'<p class="muted">Other months: {others}</p>' if others else ""))
+        + others)
     return 200, shell("Trips", body)
 
 

@@ -131,8 +131,8 @@ def _render_tiles(pts, segs, coords) -> str:
     for a, b in segs:
         (x1, y1), (x2, y2) = px(*a), px(*b)
         d = f'x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}"'
-        out.append(f'<line {d} stroke="#fff" stroke-width="5" opacity=".8"/>')
-        out.append(f'<line {d} stroke="#b3261e" stroke-width="2.5" stroke-dasharray="7 5"/>')
+        out.append(f'<line {d} stroke="#fff" stroke-width="7" opacity=".8"/>')
+        out.append(f'<line {d} stroke="#7b2cbf" stroke-width="4" stroke-dasharray="7 5"/>')
     for lat, lon, label, kind in pts:
         x, y = px(lat, lon)
         title = f"<title>{html.escape(str(label))}</title>"
