@@ -99,7 +99,7 @@ def _week_label(when: datetime.datetime) -> str:
             f"to {sunday.day} {_MONTHS[sunday.month - 1]}")
 
 
-def _month_index(months: List[str], current: str) -> str:
+def _month_index(months: List[str], current: str, mode: str = "") -> str:
     """Every month with trips, grouped by year, newest first. Only the year being viewed is open,
     so a long history stays short on the page."""
     by_year: Dict[str, List[str]] = {}
@@ -111,7 +111,7 @@ def _month_index(months: List[str], current: str) -> str:
     for year, items in by_year.items():
         links = " ".join(
             f"<strong>{m}</strong>" if m == current else f"<a href='/trips?month={m}'>{m}</a>" for m in items)
-        opened = " open" if year == current[:4] else ""
+        opened = " open" if (mode == "all" or (mode != "none" and year == current[:4])) else ""
         parts.append(f"<details{opened}><summary>{year} ({len(items)} "
                      f"{'month' if len(items) == 1 else 'months'})</summary><div class='inner'>{links}</div></details>")
     return '<h2 class="sec">All months</h2>' + "".join(parts)
@@ -172,7 +172,9 @@ def render_list(db_path: Optional[Path], query: Dict[str, List[str]], tz: dateti
     nav.append(f"<strong>{month}</strong>")
     if idx < len(months) - 1:
         nav.append(f"<a href='/trips?month={months[idx + 1]}'>{months[idx + 1]} &rarr;</a>")
-    others = _month_index(months, month)
+
+    mode = (query.get("open") or [""])[0]
+    others = _month_index(months, month, mode)
 
     known = [t.distance_km for t in shown if t.distance_km is not None]
     points: List[mapview.Point] = []
@@ -184,19 +186,32 @@ def render_list(db_path: Optional[Path], query: Dict[str, List[str]], tz: dateti
                 seen.add(stop.ts)
                 points.append((stop.lat, stop.lon, _when(stop.ts, tz), "stop"))
         lines.append(((t.start.lat, t.start.lon), (t.end.lat, t.end.lon)))
-    rows = []
-    week = None
+    mode = (query.get("open") or [""])[0]   # "all" or "none"; otherwise only the newest group is open
+    groups: List[Tuple[Tuple[int, int], str, List[trips_mod.Trip]]] = []
     for t in reversed(shown):
         ended = local(t.end.ts, tz)
-        if ended is not None and _week_key(ended) != week:
-            week = _week_key(ended)
-            rows.append(f"<tr class=week><th colspan=5>{html.escape(_week_label(ended))}</th></tr>")
-        rows.append(
+        key = _week_key(ended) if ended else (0, 0)
+        if not groups or groups[-1][0] != key:
+            groups.append((key, _week_label(ended) if ended else "Time not recorded", []))
+        groups[-1][2].append(t)
+    head = ("<tr><th>Ended</th><th class=num>Distance</th><th>From</th><th>To</th>"
+            "<th class=num>Battery</th></tr>")
+    weeks = []
+    for n, (_key, label, items) in enumerate(groups):
+        rows = "".join(
             f"<tr><td><a href='/trips/{html.escape(t.id)}'>{html.escape(_when(t.end.ts, tz))}</a></td>"
             f"<td class=num>{html.escape(_km(t.distance_km))}</td>"
             f"<td>{html.escape(_coords(t.start.lat, t.start.lon, 3))}</td>"
             f"<td>{html.escape(_coords(t.end.lat, t.end.lon, 3))}</td>"
-            f"<td class=num>{html.escape(_battery(t))}</td></tr>")
+            f"<td class=num>{html.escape(_battery(t))}</td></tr>" for t in items)
+        km = sum(t.distance_km for t in items if t.distance_km is not None)
+        opened = " open" if (mode == "all" or (mode != "none" and n == 0)) else ""
+        weeks.append(
+            f"<details class=week{opened}><summary>{html.escape(label)} &middot; {len(items)} "
+            f"{'trip' if len(items) == 1 else 'trips'}, {km:.0f} km</summary>"
+            f"<div class='inner'><table>{head}{rows}</table></div></details>")
+    fold = (f"<p class=muted><a href='/trips?month={month}&amp;open=all'>Expand all</a> &middot; "
+            f"<a href='/trips?month={month}&amp;open=none'>Close all</a></p>") if len(groups) > 1 else ""
     month_tiles = (
         f"<p>{len(shown)} {'trip' if len(shown) == 1 else 'trips'}, {sum(known):.0f} km where the distance is known.</p>"
         '<div class="tiles three">'
@@ -212,8 +227,7 @@ def render_list(db_path: Optional[Path], query: Dict[str, List[str]], tz: dateti
         f'<p class="muted">Stops drawn to scale {MAP_NOTE[tiles]}. Dashed lines join each trip\'s two '
         "stops in a straight line: they are <strong>not</strong> the routes driven.</p></div>"
         '<h2 class="sec">Trips</h2>'
-        "<table><tr><th>Ended</th><th class=num>Distance</th><th>From</th><th>To</th><th class=num>Battery</th></tr>"
-        f"{''.join(rows)}</table>"
+        f"{fold}{''.join(weeks)}"
         + others)
     return 200, shell("Trips", body)
 

@@ -162,8 +162,9 @@ class Pages(unittest.TestCase):
     def test_the_list_groups_trips_by_week_and_older_months_by_year(self):
         self.fill()
         _, page = tripviews.render_list(self.path, {}, UTC)
-        self.assertIn("<tr class=week>", page)
+        self.assertIn("<details class=week open>", page)   # the newest group is open
         self.assertIn("Week ", page)
+        self.assertNotIn("open=all", page)   # one group: nothing to fold
         index = tripviews._month_index(["1998-12", "1999-01", "1999-03"], "1999-03")
         self.assertIn("<details open><summary>1999 (2 months)</summary>", index)
         self.assertIn("<details><summary>1998 (1 month)</summary>", index)
@@ -190,6 +191,22 @@ class Pages(unittest.TestCase):
             self.assertEqual(status, 200, month)
             self.assertIn("2 trips", page)
             self.assertNotIn("<script>", page)
+
+    def test_only_the_newest_week_is_open_and_the_rest_can_be_expanded_or_closed(self):
+        db = make_db(self.tmp.name)
+        db.add_readings(VIN, [parse.Reading("location.latitude", 10.6, "deg", ts(15, 8)),
+                              parse.Reading("location.longitude", 20.6, "deg", ts(15, 8))], ts(15, 9))
+        db.close()
+        _, page = tripviews.render_list(self.path, {}, UTC)
+        self.assertEqual(page.count("<details class=week open>"), 1)
+        self.assertEqual(page.count("<details class=week>"), 1)
+        self.assertLess(page.index("Week 11"), page.index("Week 9"))   # newest first
+        self.assertIn("open=all", page)
+        self.assertIn("open=none", page)
+        _, everything = tripviews.render_list(self.path, {"open": ["all"]}, UTC)
+        self.assertEqual(everything.count("<details class=week open>"), 2)
+        _, nothing = tripviews.render_list(self.path, {"open": ["none"]}, UTC)
+        self.assertEqual(nothing.count("<details class=week open>"), 0)
 
     def test_months_have_previous_and_next_links(self):
         db = make_db(self.tmp.name)

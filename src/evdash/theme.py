@@ -72,6 +72,7 @@ th{font-size:.72rem;text-transform:uppercase;letter-spacing:.05em;color:var(--in
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
 table.kv th{width:16rem;max-width:45%;text-transform:none;letter-spacing:0;font-size:.92rem;font-weight:600;color:var(--ink-2);border-bottom:1px solid var(--rule-soft)}
 details table{table-layout:fixed}
+details.week{margin-top:8px}details.week table{table-layout:auto}details.week td:nth-child(n){width:auto}
 details td:nth-child(1){width:36%;overflow-wrap:anywhere}details td:nth-child(2){width:24%;overflow-wrap:anywhere}
 code{font-size:.88em}
 .muted{color:var(--ink-3)}
